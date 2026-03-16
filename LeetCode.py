@@ -302,10 +302,6 @@ class Graph:
             self.name = name
             self.value = value
             self.neighbours = {}
-        
-        def __str__(self):
-
-            return ", ".join([self.name, self.value, self.neighbours])
     
     def __init__(self):
 
@@ -356,17 +352,85 @@ class Graph:
                     neighbor.value = distance
         
         return {name: node.value for name, node in self.__nodes.items()}
+
+    def Dijkstra_bin(self, start_point):
+
+        import heapq as hp
+
+        for node in self.__nodes.values():
+
+            node.value = float("inf")
+        
+        start_node = self.__nodes[start_point]
+        start_node.value = 0
+
+        priority_queue = [(0, start_point)]
+
+        while priority_queue:
+
+            current_distance, current_name = hp.heappop(priority_queue)
+            current_node = self.__nodes[current_name]
+            
+            if current_distance > current_node.value:
+
+                continue
+
+            for neighbor_node, weight in current_node.neighbours.items():
+
+                distance = current_node.value + weight
+                
+                if distance < neighbor_node.value:
+
+                    neighbor_node.value = distance
+
+                    hp.heappush(priority_queue, (distance, neighbor_node.name))
+        return {name: node.value for name, node in self.__nodes.items()}
+
+    def Dejkstra(self, start_point: str) -> dict: 
+
+        """ Work principle """
+        """1. It is considered that """
+
+        for node in self.__nodes.values():
+
+            node.value = float("inf")
+        
+        self.__nodes[start_point].value = 0
+
+        queue = [self.__nodes[start_point]]
+
+        while queue:
+
+            current_node = min(queue, key = lambda x: x.value)
+
+            queue.remove(current_node)
+
+            for neighbour, weight in current_node.neighbours.items():
+
+                distance = current_node.value + weight
+
+                if distance < neighbour.value:
+
+                    neighbour.value = distance
+
+                    if neighbour not in queue:
+
+                        queue.append(neighbour)
+            
+        return {name: node.value for name, node in self.__nodes.items()}
+
+
+
+            
     
 g = Graph()
-g.add_edge("A", "B", 5)
-g.add_edge("A", "C", 10)
-g.add_edge("A", "D", 10)
-g.add_edge("D", "B", 4)
-g.add_edge("B", "F", 6)
-g.add_edge("F", "E", 5)
-g.add_edge("C", "E", 4)
+g.add_edge("A", "B", 3)
+g.add_edge("A", "C", 2)
+g.add_edge("C", "D", 6)
+g.add_edge("B", "D", 4)
 
 print(g.Dijkstra("A")) 
+print(g.Dejkstra("A"))
 
 
 
