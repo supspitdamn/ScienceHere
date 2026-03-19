@@ -419,18 +419,44 @@ class Graph:
             
         return {name: node.value for name, node in self.__nodes.items()}
 
+# numRows = int(input("Введите количество строк: "))
 
+# def generate_pascal(n):
 
-            
+#     if n == 1:
+#         return [[1]]
     
-g = Graph()
-g.add_edge("A", "B", 3)
-g.add_edge("A", "C", 2)
-g.add_edge("C", "D", 6)
-g.add_edge("B", "D", 4)
+#     triangle = generate_pascal(n - 1)
+#     prev_row = triangle[-1]
+    
+#     new_row = [1]
+#     for i in range(len(prev_row) - 1):
+#         new_row.append(prev_row[i] + prev_row[i+1])
+#     new_row.append(1)
+    
+#     triangle.append(new_row)
+#     return triangle
 
-print(g.Dijkstra("A")) 
-print(g.Dejkstra("A"))
+# if numRows > 0:
+#     print(generate_pascal(numRows))
+# else:
+#     print([])
+    
 
 
+num = str(input())
+
+if num[0] == "-":
+
+    num = num[1:]
+    sign = "-"
+    num = [sign] + [x for x in num[-1::-1]]
+
+else:
+
+    num = [x for x in num[-1::-1]]
+
+num = int("".join(num))
+
+print(num)
 
