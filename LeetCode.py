@@ -444,19 +444,124 @@ class Graph:
     
 
 
-num = str(input())
+# num = str(input())
 
-if num[0] == "-":
+# if num[0] == "-":
 
-    num = num[1:]
-    sign = "-"
-    num = [sign] + [x for x in num[-1::-1]]
+#     num = num[1:]
+#     sign = "-"
+#     num = [sign] + [x for x in num[-1::-1]]
 
-else:
+# else:
 
-    num = [x for x in num[-1::-1]]
+#     num = [x for x in num[-1::-1]]
 
-num = int("".join(num))
+# num = int("".join(num))
 
-print(num)
+# print(num)
+
+
+# s = str(input())
+# numRows = int(input())
+
+# def convert(s: str, numRows: int) -> str:
+
+#     if numRows == 1 or numRows >= len(s):
+#         return s
+    
+#     i = 0
+#     flag = 0
+#     mass = [[] for i in range(numRows)]
+
+#     for c in s:
+
+#         mass[i].append(c)
+
+#         if i == numRows - 1:
+#             flag = 1
+#         if i == 0:
+#             flag = 0
+
+#         if not flag:
+#             i += 1
+#         else:
+#             i -= 1
+    
+#     res = ""
+
+#     for row in mass:
+
+#         res += "".join(row)
+
+#     return res
+
+# print(convert(s, numRows))
+
+
+# s = str(input())
+
+# def strTonumATOI(s: str) -> int:
+#     s = s.strip()
+#     if not s:
+#         return 0
+
+#     sign = 1
+#     start_idx = 0
+
+#     # Обработка знака
+#     if s[0] == '-':
+#         sign = -1
+#         start_idx = 1
+#     elif s[0] == '+':
+#         start_idx = 1
+
+#     res_str = ""
+#     for i in range(start_idx, len(s)):
+#         if not s[i].isdigit():
+#             break
+#         res_str += s[i]
+
+#     if not res_str:
+#         return 0
+    
+#     num = int(res_str) * sign
+
+#     INT_MIN, INT_MAX = -2**31, 2**31 - 1
+#     if num < INT_MIN:
+#         return INT_MIN
+#     if num > INT_MAX:
+#         return INT_MAX
+
+#     return num
+
+    
+# print(strTonumATOI(s))
+
+import torch
+
+x = torch.randint(low = 1, high = 100, size = (10,4)).float()
+mean = x.mean(dim=0)
+std = x.std(dim=0)
+
+x_std = (x-mean)/std
+m = x.size(0)
+
+# print(x_std)
+
+x_wave = x_std.T @ x_std / (m-1)
+
+# print(x_wave)
+
+res = torch.linalg.eig(x_wave)
+
+values = res.eigenvalues.real
+vectors = res.eigenvectors.real
+print(values, vectors, sep = "\n")
+
+sorted_values, indices = torch.sort(values, descending=True)
+
+sorted_vectors = vectors[:, indices]
+
+print(f"Дисперсия: {sorted_values}")
+print(f"Самый важный вектор {sorted_vectors[:, 0]}")
 
