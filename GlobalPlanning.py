@@ -37,12 +37,13 @@ train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle = True
 
 class MLP(nn.Module):
 
-    def __init__(self, in1, out1, out2):
+    def __init__(self, *args):
 
         super().__init__()
 
-        self.l1 = nn.Linear(in1, out1)
-        self.l2 = nn.Linear(out1, out2)
+        self.l1 = nn.Linear(args[0], args[1])
+        self.l2 = nn.Linear(args[1], args[2])
+        self.l3 = nn.Linear(args[2], args[3])
     
     def forward(self, vec):
 
@@ -50,6 +51,9 @@ class MLP(nn.Module):
         x = F.relu(x)
 
         x = self.l2(x)
+        x = F.relu(x)
+
+        x = self.l3(x)
 
         return x
 
@@ -62,6 +66,8 @@ class MLP(nn.Module):
         for _ in epochs:
 
             epoch_loss = 0
+
+            prev = 0
 
             for x, y in loader:
 
@@ -80,7 +86,7 @@ class MLP(nn.Module):
 
             if len(loss_res) > 1:
 
-                if abs(loss_res[-1] - loss_res[-2])  < 1e-4 :
+                if abs(loss_res[-1] - loss_res[-2])  < 1e-3 :
                     trigger += 1
                 else:
                     trigger = 0
@@ -91,7 +97,7 @@ class MLP(nn.Module):
             
             if trigger == patience:
 
-                print(f"Останов. Эпоха : {_}")
+                print(f"Останов. Эпоха : {_}. Лосс: {avg_loss}")
                 break
         
         plt.plot(range(len(loss_res)), loss_res)
@@ -100,16 +106,17 @@ class MLP(nn.Module):
         plt.ylabel("Лосс MSE")
         plt.grid(visible=True)
         plt.show()
-        
+        return model.get_parameter()
 
-model = MLP(7, 12, 3)
+
+model = MLP(7, 10, 15, 3)
 
 op = optimizer.Adam(model.parameters(), 0.01)
 loss_func = nn.MSELoss()
 model.train()
 
-model.teaching(epochs=400, loader = train_loader)
-
+model_parameters = model.teaching(epochs=400, loader = train_loader)
+print(model_parameters)
         
 
 
