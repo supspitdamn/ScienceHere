@@ -57,7 +57,7 @@ class MLP(nn.Module):
 
         return x
 
-    def teaching(self, epochs, loader, verbose = True, patience = 15):
+    def teaching(self, epochs, loader, model_state_dict, verbose = True, patience = 15):
 
         trigger = 0
         epochs = range(epochs)
@@ -82,6 +82,7 @@ class MLP(nn.Module):
                 epoch_loss += loss.item()
             
             avg_loss = epoch_loss/len(loader)
+
             loss_res.append(avg_loss)
 
             if len(loss_res) > 1:
@@ -90,6 +91,12 @@ class MLP(nn.Module):
                     trigger += 1
                 else:
                     trigger = 0
+            
+            if trigger == 1:
+
+                model_state_dict["model"] = self.state_dict()
+                model_state_dict["optimizer"] = op.state_dict()
+                torch.save(model_state_dict, f"MLPexp.pth")
                 
             if _ % 100 == 0 and verbose:
 
@@ -106,8 +113,6 @@ class MLP(nn.Module):
         plt.ylabel("Лосс MSE")
         plt.grid(visible=True)
         plt.show()
-        return model.get_parameter()
-
 
 model = MLP(7, 10, 15, 3)
 
@@ -115,9 +120,11 @@ op = optimizer.Adam(model.parameters(), 0.01)
 loss_func = nn.MSELoss()
 model.train()
 
-model_parameters = model.teaching(epochs=400, loader = train_loader)
-print(model_parameters)
-        
+model_state_dict = {"scalerX": scaler_x, 
+                    "ScalerY": scaler_y, 
+                    "optimizer": op.state_dict(), 
+                    "Loss": loss_func, 
+                    "model": model.state_dict(),
+                    }
 
-
-        
+model_parameters = model.teaching(epochs=400, loader = train_loader, model_state_dict=model_state_dict)
