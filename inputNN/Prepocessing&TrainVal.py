@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
 import numpy as np
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv")
@@ -16,6 +16,10 @@ df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3
 
 train, temp = train_test_split(df, test_size = 0.2, random_state=42, shuffle = True)
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
+
+train = train[(train[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
+val = val[(val[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
+test = test[(test[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 
 features = ["m1vel", "m2vel", "m3vel", "type__brown", "type__gray", "type__green", "type__table"]
 targets = ["m1cur", "m2cur", "m3cur"]
@@ -176,7 +180,7 @@ class MLP(nn.Module):
         return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
                 
 
-model = MLP(7, 10, 12, 3)
+model = MLP(7, 10, 12, 10, 3)
 lr = 0.001
 op = optimizer.Adam(model.parameters(), lr=lr)
 loss_func = nn.MSELoss()
