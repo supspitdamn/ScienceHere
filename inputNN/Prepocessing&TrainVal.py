@@ -65,19 +65,23 @@ class MLP(nn.Module):
 
         return x
 
-    def teaching(self, epochs, loader, model_state_dict, verbose = True, patience = 15):
+    def teaching(self, epochs, train_loader, val_loader, model_state_dict, verbose = True, patience = 15):
 
         trigger = 0
+
         epochs = range(epochs)
-        loss_res = []
+
+        train_loss_res = []
+        val_loss_res = []
 
         for _ in epochs:
 
-            epoch_loss = 0
+            train_epoch_loss = 0
+            val_epoch_loss = 0
 
-            prev = 0
+            self.train()
 
-            for x, y in loader:
+            for x, y in train_loader:
 
                 res = self(x)
 
@@ -87,15 +91,28 @@ class MLP(nn.Module):
                 loss.backward()
                 op.step()
 
-                epoch_loss += loss.item()
+                train_epoch_loss += loss.item()
             
-            avg_loss = epoch_loss/len(loader)
+            avg_loss = train_epoch_loss/len(train_loader)
 
-            loss_res.append(avg_loss)
+            train_loss_res.append(avg_loss)
 
-            if len(loss_res) > 1:
+            model.eval()
 
-                if abs(loss_res[-1] - loss_res[-2])  < 1e-3 :
+            for x, y in val_loader:
+
+                with torch.no_grad():
+
+                    res = self(x)
+                    loss = loss_func(res, y)
+                    val_epoch_loss += loss.item()
+            
+            avg_val_loss = val_epoch_loss/len(val_loader)
+            val_loss_res.append(avg_val_loss)
+
+            if len(val_loss_res) > 1:
+
+                if abs(val_loss_res[-1] - val_loss_res[-2])  < 1e-3 :
                     trigger += 1
                 else:
                     trigger = 0
@@ -115,11 +132,16 @@ class MLP(nn.Module):
                 print(f"Останов. Эпоха : {_}. Лосс: {avg_loss}")
                 break
         
-        plt.plot(range(len(loss_res)), loss_res)
-        plt.title("Функция потерь MLP")
+        plt.plot(range(len(train_loss_res)), train_loss_res, color="blue", label = "Обучение")
+        plt.plot(range(len(val_loss_res)), val_loss_res, color = "red", label = "Валидация")
+        plt.legend()
+        plt.title(f"Функция потерь MLP{'-'.join(map(str, self.struct))}")
         plt.xlabel("Эпохи обучения")
         plt.ylabel("Лосс MSE")
         plt.grid(visible=True)
+
+        plt.savefig(f"Loss_MLP_{'-'.join(map(str, self.struct))}.png", dpi = 300, bbox_inches = "tight")
+
         plt.show()
     
     def evaluate(self, data_loader, scaler_y):
@@ -152,7 +174,7 @@ class MLP(nn.Module):
 
 model = MLP(7, 10, 15, 3)
 
-op = optimizer.Adam(model.parameters(), 0.01)
+op = optimizer.Adam(model.parameters(), 0.001)
 loss_func = nn.MSELoss()
 model.train()
 
@@ -167,7 +189,10 @@ model_state_dict = {
                     "model": model.state_dict(),
                     }
 
-model_parameters = model.teaching(epochs=400, loader = train_loader, model_state_dict=model_state_dict)
+model_parameters = model.teaching(epochs=100,
+                                   train_loader = train_loader,
+                                     val_loader = val_loader,
+                                       model_state_dict = model_state_dict)
 
 data = {"train" : train_loader, "val" : val_loader, "test" : test_loader}
 
