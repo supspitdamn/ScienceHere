@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, mean_squared_error, r2_score
+import numpy as np
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv")
 
@@ -34,6 +36,12 @@ batch_size = 64
 
 train_dataset = TensorDataset(x_train, y_train)
 train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
+
+val_dataset = TensorDataset(x_val, y_val)
+val_loader = DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
+
+test_dataset = TensorDataset(x_test, y_test)
+test_loader = DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
 
 class MLP(nn.Module):
 
@@ -113,6 +121,34 @@ class MLP(nn.Module):
         plt.ylabel("Лосс MSE")
         plt.grid(visible=True)
         plt.show()
+    
+    def evaluate(self, data_loader, scaler_y):
+        all_pred = []
+        all_true = []
+        self.eval()
+        for x, y in data_loader:
+
+            with torch.no_grad():
+
+                predict = self.forward(x).detach().cpu().numpy()
+                y = y.detach().cpu().numpy()
+
+                predict = (scaler_y.inverse_transform(predict))
+                true_value = (scaler_y.inverse_transform(y))
+
+                all_true.append(true_value)
+                all_pred.append(predict)
+
+        all_pred = np.vstack(all_pred)
+        all_true = np.vstack(all_true)
+
+        mse = mean_squared_error(all_pred, all_true, multioutput="raw_values")
+        mae = mean_absolute_error(all_pred, all_true, multioutput="raw_values")
+        mape = mean_absolute_percentage_error(all_pred, all_true, multioutput="raw_values")
+        r2 = r2_score(all_true, all_pred, multioutput="raw_values")
+
+        return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
+                
 
 model = MLP(7, 10, 15, 3)
 
@@ -132,3 +168,16 @@ model_state_dict = {
                     }
 
 model_parameters = model.teaching(epochs=400, loader = train_loader, model_state_dict=model_state_dict)
+
+data = {"train" : train_loader, "val" : val_loader, "test" : test_loader}
+
+for key, value in data.items():
+
+    res = model.evaluate(value, scaler_y=scaler_y)
+
+    metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
+
+    metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
+    metrics_df.drop("MAPE", inplace=True)
+
+    metrics_df.to_csv(f"MLP_{'-'.join(map(str, model.struct))}_metrics_{key}.csv", index_label="Метрики", encoding="utf-8-sig")
