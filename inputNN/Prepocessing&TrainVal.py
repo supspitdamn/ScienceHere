@@ -49,21 +49,23 @@ class MLP(nn.Module):
 
         super().__init__()
         self.struct = args
-        self.l1 = nn.Linear(args[0], args[1])
-        self.l2 = nn.Linear(args[1], args[2])
-        self.l3 = nn.Linear(args[2], args[3])
+        self.__layers = nn.ModuleList()
+
+        for i in range(len(args) - 1):
+
+            self.__layers.append(nn.Linear(args[i], args[i+1]))
+
+            if i < len(args) - 2:
+
+                self.__layers.append(nn.ReLU())
     
     def forward(self, vec):
 
-        x = self.l1(vec)
-        x = F.relu(x)
+        for layer in self.__layers:
 
-        x = self.l2(x)
-        x = F.relu(x)
+            vec = layer(vec)
 
-        x = self.l3(x)
-
-        return x
+        return vec
 
     def teaching(self, epochs, train_loader, val_loader, model_state_dict, verbose = True, patience = 15):
 
@@ -125,22 +127,24 @@ class MLP(nn.Module):
                 
             if _ % 100 == 0 and verbose:
 
-                print(f"Эпоха: {_}, Лосс: {avg_loss}")
+                print(f"Эпоха: {_}, Лосс обучения: {avg_loss}")
+                print(f"Эпоха: {_}, Лосс валидации: {avg_val_loss}")
             
             if trigger == patience:
 
-                print(f"Останов. Эпоха : {_}. Лосс: {avg_loss}")
+                print(f"Останов. Эпоха : {_}. Лосс обучения: {avg_loss}")
+                print(f"Останов. Эпоха: {_}, Лосс валидации: {avg_val_loss}")
                 break
         
         plt.plot(range(len(train_loss_res)), train_loss_res, color="blue", label = "Обучение")
         plt.plot(range(len(val_loss_res)), val_loss_res, color = "red", label = "Валидация")
         plt.legend()
-        plt.title(f"Функция потерь MLP{'-'.join(map(str, self.struct))}")
+        plt.title(f"Функция потерь MLP_{'-'.join(map(str, self.struct))}")
         plt.xlabel("Эпохи обучения")
         plt.ylabel("Лосс MSE")
         plt.grid(visible=True)
 
-        plt.savefig(f"Loss_MLP_{'-'.join(map(str, self.struct))}.png", dpi = 300, bbox_inches = "tight")
+        plt.savefig(f".\\inputNN\\Loss_MLP_{'-'.join(map(str, self.struct))}.png", dpi = 300, bbox_inches = "tight")
 
         plt.show()
     
@@ -205,4 +209,4 @@ for key, value in data.items():
     metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
     metrics_df.drop("MAPE", inplace=True)
 
-    metrics_df.to_csv(f"MLP_{'-'.join(map(str, model.struct))}_metrics_{key}.csv", index_label="Метрики", encoding="utf-8-sig")
+    metrics_df.to_csv(f".\\inputNN\\MLP_{'-'.join(map(str, model.struct))}_metrics_{key}.csv", index_label="Метрики", encoding="utf-8-sig")
