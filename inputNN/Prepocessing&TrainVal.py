@@ -139,12 +139,12 @@ class MLP(nn.Module):
         plt.plot(range(len(train_loss_res)), train_loss_res, color="blue", label = "Обучение")
         plt.plot(range(len(val_loss_res)), val_loss_res, color = "red", label = "Валидация")
         plt.legend()
-        plt.title(f"Функция потерь MLP_{'-'.join(map(str, self.struct))}")
+        plt.title(f"Функция потерь MLP_{'-'.join(map(str, self.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}")
         plt.xlabel("Эпохи обучения")
         plt.ylabel("Лосс MSE")
         plt.grid(visible=True)
 
-        plt.savefig(f".\\inputNN\\Loss_MLP_{'-'.join(map(str, self.struct))}.png", dpi = 300, bbox_inches = "tight")
+        plt.savefig(f".\\inputNN\\Loss_MLP_{'-'.join(map(str, self.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}.png", dpi = 300, bbox_inches = "tight")
 
         plt.show()
     
@@ -176,9 +176,9 @@ class MLP(nn.Module):
         return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
                 
 
-model = MLP(7, 10, 15, 3)
-
-op = optimizer.Adam(model.parameters(), 0.001)
+model = MLP(7, 10, 12, 3)
+lr = 0.001
+op = optimizer.Adam(model.parameters(), lr=lr)
 loss_func = nn.MSELoss()
 model.train()
 
@@ -192,6 +192,7 @@ model_state_dict = {
                     "Loss": loss_func, 
                     "model": model.state_dict(),
                     }
+
 
 model_parameters = model.teaching(epochs=100,
                                    train_loader = train_loader,
@@ -209,4 +210,4 @@ for key, value in data.items():
     metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
     metrics_df.drop("MAPE", inplace=True)
 
-    metrics_df.to_csv(f".\\inputNN\\MLP_{'-'.join(map(str, model.struct))}_metrics_{key}.csv", index_label="Метрики", encoding="utf-8-sig")
+    metrics_df.to_csv(f".\\inputNN\\MLP_{'-'.join(map(str, model.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}_metrics_{key}.csv", index_label="Метрики", encoding="utf-8-sig")
