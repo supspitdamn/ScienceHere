@@ -40,7 +40,7 @@ class MLP(nn.Module):
     def __init__(self, *args):
 
         super().__init__()
-
+        self.struct = args
         self.l1 = nn.Linear(args[0], args[1])
         self.l2 = nn.Linear(args[1], args[2])
         self.l3 = nn.Linear(args[2], args[3])
@@ -120,8 +120,12 @@ op = optimizer.Adam(model.parameters(), 0.01)
 loss_func = nn.MSELoss()
 model.train()
 
-model_state_dict = {"scalerX": scaler_x, 
-                    "ScalerY": scaler_y, 
+model_state_dict = {
+                    "testX": x_test,
+                    "testY": y_test,
+                    "scalerX": scaler_x, 
+                    "ScalerY": scaler_y,
+                    "Structure": model.struct, 
                     "optimizer": op.state_dict(), 
                     "Loss": loss_func, 
                     "model": model.state_dict(),
