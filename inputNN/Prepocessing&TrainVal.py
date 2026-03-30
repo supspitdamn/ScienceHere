@@ -180,7 +180,7 @@ class MLP(nn.Module):
         return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
                 
 
-model = MLP(7, 10, 12, 10, 3)
+model = MLP(7, 64, 64, 64, 3)
 lr = 0.001
 op = optimizer.Adam(model.parameters(), lr=lr)
 loss_func = nn.MSELoss()
