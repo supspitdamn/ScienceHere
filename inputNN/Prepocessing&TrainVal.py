@@ -9,12 +9,13 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
 import numpy as np
+import os
 
-df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv")
+df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
 df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3cur"]], columns = ["surf"], prefix = "type_")
 
-train, temp = train_test_split(df, test_size = 0.2, random_state=42, shuffle = True)
+train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle = True)
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
 
 train = train[(train[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
@@ -73,6 +74,7 @@ class MLP(nn.Module):
 
     def teaching(self, epochs, train_loader, val_loader, model_state_dict, verbose = True, patience = 15):
 
+        log_txt_path = os.path.join(save_path, "LOG.txt")
         trigger = 0
 
         epochs = range(epochs)
@@ -80,79 +82,98 @@ class MLP(nn.Module):
         train_loss_res = []
         val_loss_res = []
 
-        for _ in epochs:
+        with open(log_txt_path, "w", encoding="utf-8") as log_file:
 
-            train_epoch_loss = 0
-            val_epoch_loss = 0
+            log_file.write(f"Обучаемая сеть: {type(self).__name__}, стукутра: {"->".join(map(str,self.struct))} оптимизатор - {type(op).__name__}, шаг обучения - {lr}, функция потерь - {type(loss_func).__name__}\n")
 
-            self.train()
+            for _ in epochs:
 
-            for x, y in train_loader:
+                train_epoch_loss = 0
+                val_epoch_loss = 0
 
-                res = self(x)
+                self.train()
 
-                loss = loss_func(res, y)
-
-                op.zero_grad()
-                loss.backward()
-                op.step()
-
-                train_epoch_loss += loss.item()
-            
-            avg_loss = train_epoch_loss/len(train_loader)
-
-            train_loss_res.append(avg_loss)
-
-            model.eval()
-
-            for x, y in val_loader:
-
-                with torch.no_grad():
+                for x, y in train_loader:
 
                     res = self(x)
+
                     loss = loss_func(res, y)
-                    val_epoch_loss += loss.item()
-            
-            avg_val_loss = val_epoch_loss/len(val_loader)
-            val_loss_res.append(avg_val_loss)
 
-            if len(val_loss_res) > 1:
+                    op.zero_grad()
+                    loss.backward()
+                    op.step()
 
-                if abs(val_loss_res[-1] - val_loss_res[-2])  < 1e-3 :
-                    trigger += 1
-                else:
-                    trigger = 0
-            
-            if trigger == 1:
-
-                model_state_dict["model"] = self.state_dict()
-                model_state_dict["optimizer"] = op.state_dict()
-                torch.save(model_state_dict, f"MLPexp.pth")
+                    train_epoch_loss += loss.item()
                 
-            if _ % 100 == 0 and verbose:
+                avg_loss = train_epoch_loss/len(train_loader)
 
-                print(f"Эпоха: {_}, Лосс обучения: {avg_loss}")
-                print(f"Эпоха: {_}, Лосс валидации: {avg_val_loss}")
+                train_loss_res.append(avg_loss)
+
+                self.eval()
+
+                for x, y in val_loader:
+
+                    with torch.no_grad():
+
+                        res = self(x)
+                        loss = loss_func(res, y)
+                        val_epoch_loss += loss.item()
+                
+                avg_val_loss = val_epoch_loss/len(val_loader)
+                val_loss_res.append(avg_val_loss)
+
+                if len(val_loss_res) > 1:
+
+                    if abs(val_loss_res[-1] - val_loss_res[-2]) < 1e-3 :
+                        trigger += 1
+                    else:
+                        trigger = 0
+                
+                if trigger == 1:
+
+                    log_file.write(f"->Модель сохранена на эпохе {_}\n")
+                    model_state_dict["model"] = self.state_dict()
+                    model_state_dict["optimizer"] = op.state_dict()
+                    file_path = os.path.join(save_path, f"MLPconfig.pth")
+                    torch.save(model_state_dict, file_path)
+                
+                log_str = f"Эпоха: {_}, Лосс обучения: {avg_loss}, Лосс валидации: {avg_val_loss}\n"
+
+                if _ % 5 == 0:
+                    log_file.write(log_str)
+
+                if _ % 100 == 0 and verbose:
+
+                    print(f"Эпоха: {_}, Лосс обучения: {avg_loss}")
+                    print(f"Эпоха: {_}, Лосс валидации: {avg_val_loss}")
+                
+                if trigger == patience:
+
+                    log_file.write(f"Остановка алг. Early Stopping\n")
+                    log_file.write(log_str)
+                    print(f"Останов. Эпоха : {_}, Лосс обучения: {avg_loss}")
+                    print(f"Останов. Эпоха : {_}, Лосс валидации: {avg_val_loss}")
+                    break
+            else:
+                log_file.write(f"Штатный останов на эпохе {_}\n")
+                log_file.write(f"Лосс обучения: {avg_loss},  Лосс валидации: {avg_val_loss}\n")
+                print(f"Запланированный конец обучения. Эпоха : {_}, Лосс обучения: {avg_loss}")
+                print(f"Запланированный конец обучения. Эпоха : {_}, Лосс валидации: {avg_val_loss}")
             
-            if trigger == patience:
-
-                print(f"Останов. Эпоха : {_}. Лосс обучения: {avg_loss}")
-                print(f"Останов. Эпоха: {_}, Лосс валидации: {avg_val_loss}")
-                break
-        
         plt.plot(range(len(train_loss_res)), train_loss_res, color="blue", label = "Обучение")
         plt.plot(range(len(val_loss_res)), val_loss_res, color = "red", label = "Валидация")
         plt.legend()
-        plt.title(f"Функция потерь MLP_{'-'.join(map(str, self.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}")
+        plt.title(f"Функция потерь {type(self).__name__}_{'-'.join(map(str, self.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}")
         plt.xlabel("Эпохи обучения")
-        plt.ylabel("Лосс MSE")
+        plt.ylabel(f"Лосс {type(loss_func).__name__}")
         plt.grid(visible=True)
 
-        plt.savefig(f".\\inputNN\\Loss_MLP_{'-'.join(map(str, self.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}.png", dpi = 300, bbox_inches = "tight")
+        png_path = os.path.join(save_path, f"Loss_MLP.png")
+        plt.savefig(png_path, dpi = 300, bbox_inches = "tight")
 
         plt.show()
     
-    def evaluate(self, data_loader, scaler_y):
+    def evaluate(self, data_loader, scaler_y, name):
         all_pred = []
         all_true = []
         self.eval()
@@ -172,10 +193,18 @@ class MLP(nn.Module):
         all_pred = np.vstack(all_pred)
         all_true = np.vstack(all_true)
 
-        mse = mean_squared_error(all_pred, all_true, multioutput="raw_values")
-        mae = mean_absolute_error(all_pred, all_true, multioutput="raw_values")
-        mape = mean_absolute_percentage_error(all_pred, all_true, multioutput="raw_values")
-        r2 = r2_score(all_true, all_pred, multioutput="raw_values")
+        with open(os.path.join(save_path, "LOG.txt"), "a", encoding="utf-8") as log_txt:
+
+            mse = mean_squared_error(all_pred, all_true, multioutput="raw_values")
+            mae = mean_absolute_error(all_pred, all_true, multioutput="raw_values")
+            mape = mean_absolute_percentage_error(all_pred, all_true, multioutput="raw_values")
+            r2 = r2_score(all_true, all_pred, multioutput="raw_values")
+            
+            if name == "test":
+                log_txt.write(20*"-"+"\n")
+                log_txt.write("Результаты для тестовой выборки:\n")
+                log_txt.write(f"Абсолютная ошибка (M1, M2, M3): {'  '.join(map(str, np.round(mae, 4)))}\n")
+                log_txt.write(f"Относительная ошибка (M1, M2, M3): {'  '.join(map(str, np.round(mape * 100, 4)))}\n")
 
         return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
                 
@@ -185,6 +214,9 @@ lr = 0.001
 op = optimizer.Adam(model.parameters(), lr=lr)
 loss_func = nn.MSELoss()
 model.train()
+
+save_path = f".//inputNN//MLP_{"-".join(map(str, model.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}"
+os.makedirs(save_path, exist_ok = True)
 
 model_state_dict = {
                     "testX": x_test,
@@ -198,20 +230,23 @@ model_state_dict = {
                     }
 
 
-model_parameters = model.teaching(epochs=100,
+model_parameters = model.teaching(epochs=10,
                                    train_loader = train_loader,
                                      val_loader = val_loader,
                                        model_state_dict = model_state_dict)
 
-data = {"train" : train_loader, "val" : val_loader, "test" : test_loader}
+data = {"train" : train_loader,
+         "val" : val_loader,
+           "test" : test_loader}
 
 for key, value in data.items():
 
-    res = model.evaluate(value, scaler_y=scaler_y)
+    res = model.evaluate(value, scaler_y=scaler_y, name=key)
 
     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
 
     metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
     metrics_df.drop("MAPE", inplace=True)
 
-    metrics_df.to_csv(f".\\inputNN\\MLP_{'-'.join(map(str, model.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}_metrics_{key}.csv", index_label="Метрики", encoding="utf-8-sig")
+    table_path = os.path.join(save_path, f"MLP_metrics_{key}.csv")
+    metrics_df.to_csv(table_path, index_label="Метрики", encoding="utf-8-sig")
