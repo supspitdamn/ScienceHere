@@ -10,6 +10,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
 import numpy as np
 import os
+import optuna
+import datetime
+import json
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
@@ -72,7 +75,7 @@ class MLP(nn.Module):
 
         return vec
 
-    def teaching(self, epochs, train_loader, val_loader, model_state_dict, verbose = True, patience = 15):
+    def teaching(self, epochs, op, train_loader, val_loader, save_path, model_state_dict, verbose = True, patience = 15, loss_func = None, lr = None, batch_size = None):
 
         log_txt_path = os.path.join(save_path, "LOG.txt")
         trigger = 0
@@ -84,7 +87,7 @@ class MLP(nn.Module):
 
         with open(log_txt_path, "w", encoding="utf-8") as log_file:
 
-            log_file.write(f"Обучаемая сеть: {type(self).__name__}, стукутра: {"->".join(map(str,self.struct))} оптимизатор - {type(op).__name__}, шаг обучения - {lr}, функция потерь - {type(loss_func).__name__}\n")
+            log_file.write(f"Обучаемая сеть: {type(self).__name__}, стукутра: {"->".join(map(str,self.struct))}, оптимизатор - {type(op).__name__}, шаг обучения - {lr}, функция потерь - {type(loss_func).__name__}, Эпох обучения: {epochs}, Размер батча: {batch_size}\n")
 
             for _ in epochs:
 
@@ -142,7 +145,7 @@ class MLP(nn.Module):
                 if _ % 5 == 0:
                     log_file.write(log_str)
 
-                if _ % 100 == 0 and verbose:
+                if _ % 20 == 0 and verbose:
 
                     print(f"Эпоха: {_}, Лосс обучения: {avg_loss}")
                     print(f"Эпоха: {_}, Лосс валидации: {avg_val_loss}")
@@ -162,6 +165,7 @@ class MLP(nn.Module):
             
         plt.plot(range(len(train_loss_res)), train_loss_res, color="blue", label = "Обучение")
         plt.plot(range(len(val_loss_res)), val_loss_res, color = "red", label = "Валидация")
+
         plt.legend()
         plt.title(f"Функция потерь {type(self).__name__}_{'-'.join(map(str, self.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}")
         plt.xlabel("Эпохи обучения")
@@ -171,9 +175,15 @@ class MLP(nn.Module):
         png_path = os.path.join(save_path, f"Loss_MLP.png")
         plt.savefig(png_path, dpi = 300, bbox_inches = "tight")
 
-        plt.show()
+        if verbose:
+            plt.show()
+        
+        plt.close()
+        
+        return min(val_loss_res)
     
-    def evaluate(self, data_loader, scaler_y, name):
+    def evaluate(self, data_loader, scaler_y, save_path, name):
+
         all_pred = []
         all_true = []
         self.eval()
@@ -193,7 +203,7 @@ class MLP(nn.Module):
         all_pred = np.vstack(all_pred)
         all_true = np.vstack(all_true)
 
-        with open(os.path.join(save_path, "LOG.txt"), "a", encoding="utf-8") as log_txt:
+        with open(os.path.join(save_path, "LOG.txt"), "w", encoding="utf-8") as log_txt:
 
             mse = mean_squared_error(all_pred, all_true, multioutput="raw_values")
             mae = mean_absolute_error(all_pred, all_true, multioutput="raw_values")
@@ -207,46 +217,81 @@ class MLP(nn.Module):
                 log_txt.write(f"Относительная ошибка (M1, M2, M3): {'  '.join(map(str, np.round(mape * 100, 4)))}\n")
 
         return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
-                
+    
+    @staticmethod
 
-model = MLP(7, 64, 64, 64, 3)
-lr = 0.001
-op = optimizer.Adam(model.parameters(), lr=lr)
-loss_func = nn.MSELoss()
-model.train()
+    def objective(trial, train_loader, val_loader, root_path)->int:
 
-save_path = f".//inputNN//MLP_{"-".join(map(str, model.struct))}_{type(op).__name__}_{lr}_{type(loss_func).__name__}"
-os.makedirs(save_path, exist_ok = True)
+        lr = trial.suggest_float("lr", 1e-4, 1e-2, log = True)
+        num_layers = trial.suggest_int("num_layers", 1, 3)
+        hidden_size = trial.suggest_int("hidden_size", 32, 128, step = 32)
+        b_size = trial.suggest_categorical("batch_size", [32, 64, 128])
 
-model_state_dict = {
-                    "testX": x_test,
-                    "testY": y_test,
-                    "scalerX": scaler_x, 
-                    "ScalerY": scaler_y,
-                    "Structure": model.struct, 
-                    "optimizer": op.state_dict(), 
-                    "Loss": loss_func, 
-                    "model": model.state_dict(),
-                    }
+        layers_struct = [7] + [hidden_size]*num_layers + [3]
+        trial_model = MLP(*layers_struct)
 
+        trial_op = torch.optim.Adam(trial_model.parameters(), lr=lr)
+        trial_loss = nn.MSELoss()
 
-model_parameters = model.teaching(epochs=10,
-                                   train_loader = train_loader,
-                                     val_loader = val_loader,
-                                       model_state_dict = model_state_dict)
+        v_load = val_loader
+        t_load = train_loader
+
+        save_path = os.path.join(root_path, f"MLP_{"-".join(map(str, trial_model.struct))}_{type(trial_op).__name__}_{lr}_{type(trial_loss).__name__}_Batch_{b_size}")
+        os.makedirs(save_path, exist_ok = True)
+
+        best_val_loss = trial_model.teaching(
+            epochs=100, 
+            train_loader=t_load, 
+            val_loader=v_load, 
+            model_state_dict={},
+            op=trial_op,
+            loss_func=trial_loss,
+            lr=lr,
+            batch_size=b_size,
+            save_path=save_path,
+            verbose=False,
+            patience=10
+        )
+
+        return best_val_loss
+
+timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+root_path = f".//inputNN//MLP_study_{timestamp}"
+os.makedirs(root_path, exist_ok = True)
+
+study = optuna.create_study(direction="minimize")
+study.optimize(lambda trial: MLP.objective(trial, train_loader, val_loader, root_path), n_trials=20)
+
+best_trial = study.best_trial
+
+result = {"Номер лучшей попытки" : best_trial.number,
+          "Лучший лосс" : best_trial.value,
+          "Лучшие параметры" : best_trial.params,
+          }
+
+with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
+    json.dump(result, res, indent=4, ensure_ascii=False)
 
 data = {"train" : train_loader,
          "val" : val_loader,
            "test" : test_loader}
 
+best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
+model = MLP(*best_struct)
+best_trial_folder = f"MLP_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
+best_weight_path = os.path.join(root_path, best_trial_folder, "MLPconfig.pth")
+
+checkpoint = torch.load(best_weight_path)
+model.load_state_dict(checkpoint["model"])
+
 for key, value in data.items():
 
-    res = model.evaluate(value, scaler_y=scaler_y, name=key)
+    res = model.evaluate(value, scaler_y=scaler_y, name=key, save_path=root_path)
 
     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
 
     metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
     metrics_df.drop("MAPE", inplace=True)
 
-    table_path = os.path.join(save_path, f"MLP_metrics_{key}.csv")
+    table_path = os.path.join(root_path, f"FINAL_MLP_metrics_{key}.csv")
     metrics_df.to_csv(table_path, index_label="Метрики", encoding="utf-8-sig")
