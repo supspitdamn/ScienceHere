@@ -14,6 +14,9 @@ import optuna
 import datetime
 import json
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Обучение на {device}")
+
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
 df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3cur"]], columns = ["surf"], prefix = "type_")
@@ -67,7 +70,7 @@ class MLP(nn.Module):
 
                 self.__layers.append(nn.ReLU())
     
-    def forward(self, vec):
+    def forward(self, vec: torch.Tensor):
 
         for layer in self.__layers:
 
@@ -75,7 +78,9 @@ class MLP(nn.Module):
 
         return vec
 
-    def teaching(self, epochs, op, train_loader, val_loader, save_path, model_state_dict, verbose = True, patience = 15, loss_func = None, lr = None, batch_size = None):
+    def teaching(self, epochs: int, op: torch.optim.Optimizer, train_loader: DataLoader, val_loader: DataLoader, save_path: str, model_state_dict: dict, verbose: bool = True, patience: int = 15, loss_func = None, lr: float = None, batch_size: int = None) -> float:
+
+        device = next(self.parameters()).device
 
         log_txt_path = os.path.join(save_path, "LOG.txt")
         trigger = 0
@@ -98,6 +103,8 @@ class MLP(nn.Module):
 
                 for x, y in train_loader:
 
+                    x, y = x.to(device), y.to(device)
+
                     res = self(x)
 
                     loss = loss_func(res, y)
@@ -115,6 +122,8 @@ class MLP(nn.Module):
                 self.eval()
 
                 for x, y in val_loader:
+
+                    x, y = x.to(device), y.to(device)
 
                     with torch.no_grad():
 
@@ -182,12 +191,14 @@ class MLP(nn.Module):
         
         return min(val_loss_res)
     
-    def evaluate(self, data_loader, scaler_y, save_path, name):
+    def evaluate(self, data_loader: DataLoader, scaler_y : StandardScaler, save_path: str, name: str, device: str = "cpu") -> dict:
 
         all_pred = []
         all_true = []
         self.eval()
         for x, y in data_loader:
+
+            x, y = x.to(device), y.to(device)
 
             with torch.no_grad():
 
@@ -220,16 +231,17 @@ class MLP(nn.Module):
     
     @staticmethod
 
-    def objective(trial, train_loader, val_loader, root_path)->int:
+    def objective(trial, train_loader, val_loader, root_path, device = "cpu")->float:
 
-        lr = trial.suggest_float("lr", 1e-4, 1e-2, log = True)
-        num_layers = trial.suggest_int("num_layers", 1, 3)
-        hidden_size = trial.suggest_int("hidden_size", 32, 128, step = 32)
-        b_size = trial.suggest_categorical("batch_size", [32, 64, 128])
-        weight_decay = trial.suggest_float("weight_decay", 1e-4, 1e-3)
+        lr = trial.suggest_float("lr", 1e-4, 1e-2)
+        num_layers = trial.suggest_int("num_layers", 1, 5)
+        hidden_size = trial.suggest_int("hidden_size", 16, 128, step = 16)
+        b_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
+        weight_decay = trial.suggest_float("weight_decay", 0, 1e-3)
 
         layers_struct = [7] + [hidden_size]*num_layers + [3]
-        trial_model = MLP(*layers_struct)
+
+        trial_model = MLP(*layers_struct).to(device=device)
 
         trial_op = torch.optim.Adam(trial_model.parameters(), lr=lr, weight_decay=weight_decay)
         trial_loss = nn.MSELoss()
@@ -261,7 +273,7 @@ root_path = f".//MLP_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 
 study = optuna.create_study(direction="minimize")
-study.optimize(lambda trial: MLP.objective(trial, train_loader, val_loader, root_path), n_trials=20)
+study.optimize(lambda trial: MLP.objective(trial, train_loader, val_loader, root_path, device), n_trials=40)
 
 best_trial = study.best_trial
 
@@ -278,16 +290,16 @@ data = {"train" : train_loader,
            "test" : test_loader}
 
 best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
-model = MLP(*best_struct)
+model = MLP(*best_struct).to(device)
+
 best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
 best_weight_path = os.path.join(root_path, best_trial_folder, "MLPconfig.pth")
-
-checkpoint = torch.load(best_weight_path)
+checkpoint = torch.load(best_weight_path, map_location=device)
 model.load_state_dict(checkpoint["model"])
 
 for key, value in data.items():
 
-    res = model.evaluate(value, scaler_y=scaler_y, name=key, save_path=root_path)
+    res = model.evaluate(value, scaler_y=scaler_y, name=key, save_path=root_path, device=device)
 
     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
 
