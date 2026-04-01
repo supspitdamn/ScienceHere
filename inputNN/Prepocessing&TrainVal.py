@@ -226,17 +226,18 @@ class MLP(nn.Module):
         num_layers = trial.suggest_int("num_layers", 1, 3)
         hidden_size = trial.suggest_int("hidden_size", 32, 128, step = 32)
         b_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+        weight_decay = trial.suggest_float("weight_decay", 1e-4, 1e-3)
 
         layers_struct = [7] + [hidden_size]*num_layers + [3]
         trial_model = MLP(*layers_struct)
 
-        trial_op = torch.optim.Adam(trial_model.parameters(), lr=lr)
+        trial_op = torch.optim.Adam(trial_model.parameters(), lr=lr, weight_decay=weight_decay)
         trial_loss = nn.MSELoss()
 
         v_load = val_loader
         t_load = train_loader
 
-        save_path = os.path.join(root_path, f"MLP_{"-".join(map(str, trial_model.struct))}_{type(trial_op).__name__}_{lr}_{type(trial_loss).__name__}_Batch_{b_size}")
+        save_path = os.path.join(root_path, f"MLP_{trial.number}_{"-".join(map(str, trial_model.struct))}_{type(trial_op).__name__}_{lr}_{type(trial_loss).__name__}_Batch_{b_size}")
         os.makedirs(save_path, exist_ok = True)
 
         best_val_loss = trial_model.teaching(
@@ -256,7 +257,7 @@ class MLP(nn.Module):
         return best_val_loss
 
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-root_path = f".//inputNN//MLP_study_{timestamp}"
+root_path = f".//MLP_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 
 study = optuna.create_study(direction="minimize")
@@ -278,7 +279,7 @@ data = {"train" : train_loader,
 
 best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
 model = MLP(*best_struct)
-best_trial_folder = f"MLP_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
+best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
 best_weight_path = os.path.join(root_path, best_trial_folder, "MLPconfig.pth")
 
 checkpoint = torch.load(best_weight_path)
