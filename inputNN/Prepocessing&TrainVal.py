@@ -265,9 +265,9 @@ study.optimize(lambda trial: MLP.objective(trial, train_loader, val_loader, root
 
 best_trial = study.best_trial
 
-result = {"Номер лучшей попытки" : best_trial.number,
-          "Лучший лосс" : best_trial.value,
-          "Лучшие параметры" : best_trial.params,
+result = {"Best trial number" : best_trial.number,
+          "Best loss" : best_trial.value,
+          "Best parameters" : best_trial.params,
           }
 
 with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
