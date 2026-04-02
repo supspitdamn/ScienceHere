@@ -269,7 +269,7 @@ class MLP(nn.Module):
         return best_val_loss
 
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-root_path = f".//MLP_study_{timestamp}"
+root_path = f".//RealVelocity_To_Current//MLP_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 
 study = optuna.create_study(direction="minimize")
