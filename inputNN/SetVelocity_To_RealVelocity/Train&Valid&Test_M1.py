@@ -28,8 +28,8 @@ train = train[(train[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 val = val[(val[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 test = test[(test[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 
-features = ["m1vel", "m2vel", "m3vel", "type__brown", "type__gray", "type__green", "type__table"]
-targets = ["m1cur", "m2cur", "m3cur"]
+features = ["m1setvel", "type__gray", "type__green", "type__table"]
+targets = ["m1vel"]
 
 scaler_x = StandardScaler()
 scaler_y = StandardScaler()
@@ -43,16 +43,11 @@ y_val = torch.tensor(scaler_y.transform(val[targets]), dtype = torch.float32)
 x_test = torch.tensor(scaler_x.transform(test[features]), dtype = torch.float32)
 y_test = torch.tensor(scaler_y.transform(test[targets]), dtype = torch.float32)
 
-batch_size = 64
-
 train_dataset = TensorDataset(x_train, y_train)
-train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle = True)
 
 val_dataset = TensorDataset(x_val, y_val)
-val_loader = DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
 
 test_dataset = TensorDataset(x_test, y_test)
-test_loader = DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
 
 class MLP(nn.Module):
 
@@ -81,6 +76,7 @@ class MLP(nn.Module):
     def teaching(self, epochs: int, op: torch.optim.Optimizer, train_loader: DataLoader, val_loader: DataLoader, save_path: str, model_state_dict: dict, verbose: bool = True, patience: int = 15, loss_func = None, lr: float = None, batch_size: int = None) -> float:
 
         device = next(self.parameters()).device
+        best_val_loss = float("inf")
 
         log_txt_path = os.path.join(save_path, "LOG.txt")
         trigger = 0
@@ -134,20 +130,19 @@ class MLP(nn.Module):
                 avg_val_loss = val_epoch_loss/len(val_loader)
                 val_loss_res.append(avg_val_loss)
 
-                if len(val_loss_res) > 1:
-
-                    if abs(val_loss_res[-1] - val_loss_res[-2]) < 1e-3 :
-                        trigger += 1
-                    else:
-                        trigger = 0
-                
-                if trigger == 1:
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    trigger = 0
 
                     log_file.write(f"->Модель сохранена на эпохе {_}\n")
                     model_state_dict["model"] = self.state_dict()
                     model_state_dict["optimizer"] = op.state_dict()
+                    model_state_dict["epoch"] = _
                     file_path = os.path.join(save_path, f"MLPconfig.pth")
                     torch.save(model_state_dict, file_path)
+                else:
+                    trigger += 1
+
                 
                 log_str = f"Эпоха: {_}, Лосс обучения: {avg_loss}, Лосс валидации: {avg_val_loss}\n"
 
@@ -159,7 +154,7 @@ class MLP(nn.Module):
                     print(f"Эпоха: {_}, Лосс обучения: {avg_loss}")
                     print(f"Эпоха: {_}, Лосс валидации: {avg_val_loss}")
                 
-                if trigger == patience:
+                if trigger >= patience:
 
                     log_file.write(f"Остановка алг. Early Stopping\n")
                     log_file.write(log_str)
@@ -231,7 +226,7 @@ class MLP(nn.Module):
     
     @staticmethod
 
-    def objective(trial, train_loader, val_loader, root_path, device = "cpu")->float:
+    def objective(trial, train_dataset, val_dataset, root_path, device = "cpu")->float:
 
         lr = trial.suggest_float("lr", 1e-4, 1e-2)
         num_layers = trial.suggest_int("num_layers", 1, 5)
@@ -246,8 +241,8 @@ class MLP(nn.Module):
         trial_op = torch.optim.Adam(trial_model.parameters(), lr=lr, weight_decay=weight_decay)
         trial_loss = nn.MSELoss()
 
-        v_load = val_loader
-        t_load = train_loader
+        v_load = DataLoader(val_dataset, batch_size=b_size, shuffle=False)
+        t_load = DataLoader(train_dataset, batch_size=b_size, shuffle=True)
 
         save_path = os.path.join(root_path, f"MLP_{trial.number}_{"-".join(map(str, trial_model.struct))}_{type(trial_op).__name__}_{lr}_{type(trial_loss).__name__}_Batch_{b_size}")
         os.makedirs(save_path, exist_ok = True)
@@ -273,7 +268,7 @@ root_path = f".//SetVelocity_to_RealVelocity//MLP_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 
 study = optuna.create_study(direction="minimize")
-study.optimize(lambda trial: MLP.objective(trial, train_loader, val_loader, root_path, device), n_trials=40)
+study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
 
 best_trial = study.best_trial
 
@@ -281,6 +276,10 @@ result = {"Best trial number" : best_trial.number,
           "Best loss" : best_trial.value,
           "Best parameters" : best_trial.params,
           }
+
+train_loader = DataLoader(train_dataset, batch_size = best_trial.params["batch_size"], shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size = best_trial.params["batch_size"], shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size = best_trial.params["batch_size"], shuffle = False)
 
 with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
     json.dump(result, res, indent=4, ensure_ascii=False)
