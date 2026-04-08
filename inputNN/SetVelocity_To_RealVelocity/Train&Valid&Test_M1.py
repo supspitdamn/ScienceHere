@@ -19,16 +19,18 @@ print(f"Обучение на {device}")
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
-df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3cur"]], columns = ["surf"], prefix = "type_")
+df = pd.get_dummies(df[["m1vel", "m1setvel", "surf"]], columns = ["surf"], prefix = "type_")
+
+df.info()
+
+df["m1setvel"] = pd.to_numeric(df["m1setvel"], errors="coerce")
+df = df.dropna(subset=["m1vel", "m1setvel"])
+df = df[(df["m1vel"] > 0.01) & (df["m1setvel"] > 0.01)]
 
 train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle = True)
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
 
-train = train[(train[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
-val = val[(val[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
-test = test[(test[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
-
-features = ["m1setvel", "type__gray", "type__green", "type__table"]
+features = ["m1setvel", "type__gray", "type__green", "type__table", "type__brown"]
 targets = ["m1vel"]
 
 scaler_x = StandardScaler()
@@ -230,11 +232,11 @@ class MLP(nn.Module):
 
         lr = trial.suggest_float("lr", 1e-4, 1e-2)
         num_layers = trial.suggest_int("num_layers", 1, 5)
-        hidden_size = trial.suggest_int("hidden_size", 16, 128, step = 16)
+        hidden_size = trial.suggest_categorical("hidden_size", [16, 32, 64, 128])
         b_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
         weight_decay = trial.suggest_float("weight_decay", 0, 1e-3)
 
-        layers_struct = [7] + [hidden_size]*num_layers + [3]
+        layers_struct = [5] + [hidden_size]*num_layers + [1]
 
         trial_model = MLP(*layers_struct).to(device=device)
 
@@ -288,7 +290,7 @@ data = {"train" : train_loader,
          "val" : val_loader,
            "test" : test_loader}
 
-best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
+best_struct = [5] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [1]
 model = MLP(*best_struct).to(device)
 
 best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
