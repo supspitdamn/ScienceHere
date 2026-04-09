@@ -1,0 +1,11 @@
+{
+    "Best trial number": 33,
+    "Best loss": 0.0004251435608331753,
+    "Best parameters": {
+        "lr": 0.00782255740687542,
+        "num_layers": 2,
+        "hidden_size": 64,
+        "batch_size": 128,
+        "weight_decay": 5.112215590861377e-06
+    }
+}
