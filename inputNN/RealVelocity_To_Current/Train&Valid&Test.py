@@ -19,7 +19,7 @@ print(f"Обучение на {device}")
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
-df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3cur"]], columns = ["surf"], prefix = "type_")
+df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3cur"]], columns = ["surf"], prefix = "type_").astype(float)
 
 train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle = True)
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
@@ -31,17 +31,16 @@ test = test[(test[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 features = ["m1vel", "m2vel", "m3vel", "type__brown", "type__gray", "type__green", "type__table"]
 targets = ["m1cur", "m2cur", "m3cur"]
 
-scaler_x = StandardScaler()
-scaler_y = StandardScaler()
+df.info()
 
-x_train = torch.tensor(scaler_x.fit_transform(train[features]), dtype = torch.float32)
-y_train = torch.tensor(scaler_y.fit_transform(train[targets]), dtype = torch.float32)
+x_train = torch.tensor((train[features].values), dtype = torch.float32)
+y_train = torch.tensor((train[targets].values), dtype = torch.float32)
 
-x_val = torch.tensor(scaler_x.transform(val[features]), dtype = torch.float32)
-y_val = torch.tensor(scaler_y.transform(val[targets]), dtype = torch.float32)
+x_val = torch.tensor((val[features].values), dtype = torch.float32)
+y_val = torch.tensor((val[targets].values), dtype = torch.float32)
 
-x_test = torch.tensor(scaler_x.transform(test[features]), dtype = torch.float32)
-y_test = torch.tensor(scaler_y.transform(test[targets]), dtype = torch.float32)
+x_test = torch.tensor((test[features].values), dtype = torch.float32)
+y_test = torch.tensor((test[targets].values), dtype = torch.float32)
 
 batch_size = 64
 
@@ -53,6 +52,8 @@ val_loader = DataLoader(val_dataset, batch_size = batch_size, shuffle = True)
 
 test_dataset = TensorDataset(x_test, y_test)
 test_loader = DataLoader(test_dataset, batch_size = batch_size, shuffle = True)
+
+df.info()
 
 class MLP(nn.Module):
 
@@ -191,7 +192,7 @@ class MLP(nn.Module):
         
         return min(val_loss_res)
     
-    def evaluate(self, data_loader: DataLoader, scaler_y : StandardScaler, save_path: str, name: str, device: str = "cpu") -> dict:
+    def evaluate(self, data_loader: DataLoader, save_path: str, name: str, device: str = "cpu") -> dict:
 
         all_pred = []
         all_true = []
@@ -203,10 +204,7 @@ class MLP(nn.Module):
             with torch.no_grad():
 
                 predict = self.forward(x).detach().cpu().numpy()
-                y = y.detach().cpu().numpy()
-
-                predict = (scaler_y.inverse_transform(predict))
-                true_value = (scaler_y.inverse_transform(y))
+                true_value = y.detach().cpu().numpy()
 
                 all_true.append(true_value)
                 all_pred.append(predict)
@@ -231,11 +229,11 @@ class MLP(nn.Module):
     
     @staticmethod
 
-    def objective(trial, train_loader, val_loader, root_path, device = "cpu")->float:
+    def objective(trial, train_dataset, val_dataset, root_path, device = "cpu")->float:
 
         lr = trial.suggest_float("lr", 1e-4, 1e-2)
         num_layers = trial.suggest_int("num_layers", 1, 5)
-        hidden_size = trial.suggest_int("hidden_size", 16, 128, step = 16)
+        hidden_size = trial.suggest_categorical("hidden_size", [16, 32, 64, 128])
         b_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
         weight_decay = trial.suggest_float("weight_decay", 0, 1e-3)
 
@@ -246,8 +244,8 @@ class MLP(nn.Module):
         trial_op = torch.optim.Adam(trial_model.parameters(), lr=lr, weight_decay=weight_decay)
         trial_loss = nn.MSELoss()
 
-        v_load = val_loader
-        t_load = train_loader
+        v_load = DataLoader(val_dataset, batch_size=b_size, shuffle=False)
+        t_load = DataLoader(train_dataset, batch_size=b_size, shuffle=True)
 
         save_path = os.path.join(root_path, f"MLP_{trial.number}_{"-".join(map(str, trial_model.struct))}_{type(trial_op).__name__}_{lr}_{type(trial_loss).__name__}_Batch_{b_size}")
         os.makedirs(save_path, exist_ok = True)
@@ -273,7 +271,7 @@ root_path = f".//RealVelocity_To_Current//MLP_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 
 study = optuna.create_study(direction="minimize")
-study.optimize(lambda trial: MLP.objective(trial, train_loader, val_loader, root_path, device), n_trials=40)
+study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
 
 best_trial = study.best_trial
 
@@ -281,6 +279,10 @@ result = {"Best trial number" : best_trial.number,
           "Best loss" : best_trial.value,
           "Best parameters" : best_trial.params,
           }
+
+train_loader = DataLoader(train_dataset, batch_size = best_trial.params["batch_size"], shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size = best_trial.params["batch_size"], shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size = best_trial.params["batch_size"], shuffle = False)
 
 with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
     json.dump(result, res, indent=4, ensure_ascii=False)
@@ -299,7 +301,7 @@ model.load_state_dict(checkpoint["model"])
 
 for key, value in data.items():
 
-    res = model.evaluate(value, scaler_y=scaler_y, name=key, save_path=root_path, device=device)
+    res = model.evaluate(value, name=key, save_path=root_path, device=device)
 
     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
 

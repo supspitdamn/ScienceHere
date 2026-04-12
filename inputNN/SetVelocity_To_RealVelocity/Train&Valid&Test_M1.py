@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import torch.optim as optimizer
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
 import numpy as np
@@ -19,36 +18,41 @@ print(f"Обучение на {device}")
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
-df = pd.get_dummies(df[["m1vel", "m1setvel", "surf"]], columns = ["surf"], prefix = "type_")
+surf_cols = ["surf"]
+vel_cols = ["m1vel", "m2vel", "m3vel"]
+setvel_cols = ["m1setvel", "m2setvel", "m3setvel"]
+
+df_vel = df.melt(id_vars=surf_cols, value_vars=vel_cols, value_name="mvel")
+df_setvel = df.melt(value_vars=setvel_cols, value_name="msetvel")
+
+df = pd.concat([df_vel[["mvel", "surf"]], df_setvel["msetvel"]], axis=1)
+
+df = pd.get_dummies(df, columns=["surf"], prefix="type_")
+
+df["msetvel"] = pd.to_numeric(df["msetvel"], errors="coerce")
+df["mvel"] = pd.to_numeric(df["mvel"], errors="coerce")
+
+df = df.dropna(subset=["mvel", "msetvel"])
+
+train, temp = train_test_split(df, test_size=0.2, random_state=42, shuffle=True)
+val, test = train_test_split(temp, test_size=0.5, random_state=42, shuffle=True)
+
+features = ["msetvel"] + [col for col in df.columns if col.startswith("type_")]
+targets = ["mvel"]
 
 df.info()
 
-df["m1setvel"] = pd.to_numeric(df["m1setvel"], errors="coerce")
-df = df.dropna(subset=["m1vel", "m1setvel"])
-df = df[(df["m1vel"] > 0.01) & (df["m1setvel"] > 0.01)]
+x_train = torch.tensor(train[features].values.astype(float), dtype=torch.float32).to(device)
+y_train = torch.tensor(train[targets].values.astype(float), dtype=torch.float32).to(device)
 
-train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle = True)
-val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
+x_val = torch.tensor(val[features].values.astype(float), dtype=torch.float32).to(device)
+y_val = torch.tensor(val[targets].values.astype(float), dtype=torch.float32).to(device)
 
-features = ["m1setvel", "type__gray", "type__green", "type__table", "type__brown"]
-targets = ["m1vel"]
-
-scaler_x = StandardScaler()
-scaler_y = StandardScaler()
-
-x_train = torch.tensor(scaler_x.fit_transform(train[features]), dtype = torch.float32)
-y_train = torch.tensor(scaler_y.fit_transform(train[targets]), dtype = torch.float32)
-
-x_val = torch.tensor(scaler_x.transform(val[features]), dtype = torch.float32)
-y_val = torch.tensor(scaler_y.transform(val[targets]), dtype = torch.float32)
-
-x_test = torch.tensor(scaler_x.transform(test[features]), dtype = torch.float32)
-y_test = torch.tensor(scaler_y.transform(test[targets]), dtype = torch.float32)
+x_test = torch.tensor(test[features].values.astype(float), dtype=torch.float32).to(device)
+y_test = torch.tensor(test[targets].values.astype(float), dtype=torch.float32).to(device)
 
 train_dataset = TensorDataset(x_train, y_train)
-
 val_dataset = TensorDataset(x_val, y_val)
-
 test_dataset = TensorDataset(x_test, y_test)
 
 class MLP(nn.Module):
@@ -188,7 +192,7 @@ class MLP(nn.Module):
         
         return min(val_loss_res)
     
-    def evaluate(self, data_loader: DataLoader, scaler_y : StandardScaler, save_path: str, name: str, device: str = "cpu") -> dict:
+    def evaluate(self, data_loader: DataLoader, save_path: str, name: str, device: str = "cpu") -> dict:
 
         all_pred = []
         all_true = []
@@ -202,10 +206,7 @@ class MLP(nn.Module):
                 predict = self.forward(x).detach().cpu().numpy()
                 y = y.detach().cpu().numpy()
 
-                predict = (scaler_y.inverse_transform(predict))
-                true_value = (scaler_y.inverse_transform(y))
-
-                all_true.append(true_value)
+                all_true.append(y)
                 all_pred.append(predict)
 
         all_pred = np.vstack(all_pred)
@@ -300,7 +301,7 @@ model.load_state_dict(checkpoint["model"])
 
 for key, value in data.items():
 
-    res = model.evaluate(value, scaler_y=scaler_y, name=key, save_path=root_path, device=device)
+    res = model.evaluate(value, name=key, save_path=root_path, device=device)
 
     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
 
