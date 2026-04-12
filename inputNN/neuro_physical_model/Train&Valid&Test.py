@@ -19,31 +19,37 @@ print(f"Обучение на {device}")
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
-df = pd.get_dummies(df[["m1setvel", "m2setvel", "m3setvel", "m1cur", "m2cur", "m3cur", "surf"]], columns = ["surf"], prefix = "type_")
+df = pd.get_dummies(df[["m1setvel", "m2setvel", "m3setvel", "m1cur", "m2cur", "m3cur", "surf", "m1vel", "m2vel", "m3vel"]], columns = ["surf"], prefix = "type_")
 
 df.info()
 
 df["m1setvel"] = pd.to_numeric(df["m1setvel"], errors="coerce")
-df = df.dropna(subset=["m1vel", "m1setvel"])
-df = df[(df["m1vel"] > 0.01) & (df["m1setvel"] > 0.01)]
+df["m2setvel"] = pd.to_numeric(df["m2setvel"], errors="coerce")
+df["m3setvel"] = pd.to_numeric(df["m3setvel"], errors="coerce")
+df = df.dropna(subset=["m1setvel", "m2setvel", "m3setvel"])
 
 train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle = True)
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
 
 features = ["m1setvel", "m2setvel", "m3setvel", "type__gray", "type__green", "type__table", "type__brown"]
+features_extra = ["m1vel", "m2vel", "m3vel"]
 targets = ["m1cur", "m2cur", "m3cur"]
 
-scaler_x = StandardScaler()
-scaler_y = StandardScaler()
+scaler_in = StandardScaler()
+scaler_btw = StandardScaler()
+scaler_out = StandardScaler()
 
-x_train = torch.tensor(scaler_x.fit_transform(train[features]), dtype = torch.float32)
-y_train = torch.tensor(scaler_y.fit_transform(train[targets]), dtype = torch.float32)
+df.info()
 
-x_val = torch.tensor(scaler_x.transform(val[features]), dtype = torch.float32)
-y_val = torch.tensor(scaler_y.transform(val[targets]), dtype = torch.float32)
+x_train = torch.tensor(scaler_in.fit_transform(train[features]), dtype = torch.float32)
+y_train = torch.tensor(scaler_out.fit_transform(train[targets]), dtype = torch.float32)
+pimple = torch.tensor(scaler_btw.fit_transform(train[features_extra]), dtype = torch.float32)
 
-x_test = torch.tensor(scaler_x.transform(test[features]), dtype = torch.float32)
-y_test = torch.tensor(scaler_y.transform(test[targets]), dtype = torch.float32)
+x_val = torch.tensor(scaler_in.transform(val[features]), dtype = torch.float32)
+y_val = torch.tensor(scaler_out.transform(val[targets]), dtype = torch.float32)
+
+x_test = torch.tensor(scaler_in.transform(test[features]), dtype = torch.float32)
+y_test = torch.tensor(scaler_out.transform(test[targets]), dtype = torch.float32)
 
 train_dataset = TensorDataset(x_train, y_train)
 
@@ -267,79 +273,126 @@ class MLP(nn.Module):
 
 class NPM(nn.Module):
 
-    def __init__(self, seq_neur: list) -> None:
+    def __init__(self, seq_neur: list, device: str = "cuda") -> None:
         super().__init__()
+        
         self.stage_1 = nn.ModuleList(seq_neur[0])
         self.stage_2 = seq_neur[1]
+
+        self.to(device)
     
     def forward(self, vec: torch.Tensor):
-        surfs = vec[:, 3:7]
 
-        in1 = torch.cat((vec[:, 0:1], surfs), dim = 1)
-        in2 = torch.cat((vec[:, 1:2], surfs), dim = 1)
-        in3 = torch.cat((vec[:, 2:3], surfs), dim = 1)
+        device = next(self.parameters()).device
+        vec = vec.to(device).float()
 
-        v1_real = self.stage_1[0](in1)
-        v2_real = self.stage_1[1](in2)
-        v3_real = self.stage_1[2](in3)
+        surfs_scaled = vec[:, 3:7]
 
-        real_velocities = torch.cat((v1_real, v2_real, v3_real), dim = 1)
+        v1_s = self.stage_1[0](torch.cat((vec[:, 0:1], surfs_scaled), dim=1))
+        v2_s = self.stage_1[1](torch.cat((vec[:, 1:2], surfs_scaled), dim=1))
+        v3_s = self.stage_1[2](torch.cat((vec[:, 2:3], surfs_scaled), dim=1))
 
-        in_st2 = torch.cat((real_velocities, surfs), dim = 1)
+        v_scaled_st1 = torch.cat((v1_s, v2_s, v3_s), dim=1)
+
+        in_st2 = torch.cat((v_scaled_st1, surfs_scaled), dim=1)
 
         return self.stage_2(in_st2)
 
-best_par_sv_v = torch.load("SetVelocity_To_RealVelocity\MLP_study_20260408_230054\MLP_33_5-64-64-1_Adam_0.00782255740687542_MSELoss_Batch_128\MLPconfig.pth")
-best_par_v_c = torch.load("RealVelocity_To_Current\MLP_study_20260331_211138\MLP_7-96-96-96-3_Adam_0.000746242532647897_MSELoss_Batch_32\MLPconfig.pth")
+    def evaluate(self, data_loader: DataLoader, scaler_y: StandardScaler, name: str, save_path: str, device: str = "cpu") -> dict:
 
-mlp_sv1_v1 = MLP(5, 64, 64, 1).load_state_dict(best_par_sv_v)
-mlp_sv2_v2 = MLP(5, 64, 64, 1).load_state_dict(best_par_sv_v)
-mlp_sv3_v3 = MLP(5, 64, 64, 1).load_state_dict(best_par_sv_v)
-mlp_vs_cs = MLP(7, 96, 96, 96, 3).load_state_dict(best_par_v_c)
+        
+        all_pred = []
+        all_true = []
+        self.eval()
+        for x, y in data_loader:
 
-npm = NPM([[mlp_sv1_v1, mlp_sv2_v2, mlp_sv3_v3],mlp_vs_cs])
+            x, y = x.to(device), y.to(device)
+
+            with torch.no_grad():
+
+                predict = self.forward(x).detach().cpu().numpy()
+                y = y.detach().cpu().numpy()
+
+                predict = (scaler_y.inverse_transform(predict))
+                true_value = (scaler_y.inverse_transform(y))
+
+                all_true.append(true_value)
+                all_pred.append(predict)
+
+        all_pred = np.vstack(all_pred)
+        all_true = np.vstack(all_true)
+
+        with open(os.path.join(save_path, "LOG.txt"), "w", encoding="utf-8") as log_txt:
+
+            mse = mean_squared_error(all_pred, all_true, multioutput="raw_values")
+            mae = mean_absolute_error(all_pred, all_true, multioutput="raw_values")
+            mape = mean_absolute_percentage_error(all_pred, all_true, multioutput="raw_values")
+            r2 = r2_score(all_true, all_pred, multioutput="raw_values")
+            
+            if name == "test":
+                log_txt.write(20*"-"+"\n")
+                log_txt.write("Результаты для тестовой выборки:\n")
+                log_txt.write(f"Абсолютная ошибка (M1, M2, M3): {'  '.join(map(str, np.round(mae, 4)))}\n")
+                log_txt.write(f"Относительная ошибка (M1, M2, M3): {'  '.join(map(str, np.round(mape * 100, 4)))}\n")
+
+        return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
+
+
+
+best_par_sv_v = torch.load(".//inputNN//SetVelocity_To_RealVelocity//MLP_study_20260408_230054//MLP_33_5-64-64-1_Adam_0.00782255740687542_MSELoss_Batch_128//MLPconfig.pth")
+best_par_v_c = torch.load(".//inputNN//RealVelocity_To_Current//MLP_study_20260331_211138//MLP_7-96-96-96-3_Adam_0.000746242532647897_MSELoss_Batch_32//MLPconfig.pth")
+mlp_sv1_v1 = MLP(5, 64, 64, 1)
+mlp_sv2_v2 = MLP(5, 64, 64, 1)
+mlp_sv3_v3 = MLP(5, 64, 64, 1)
+mlp_vs_cs = MLP(7, 96, 96, 96, 3)
+
+mlp_sv1_v1.load_state_dict(best_par_sv_v["model"])
+mlp_sv2_v2.load_state_dict(best_par_sv_v["model"])
+mlp_sv3_v3.load_state_dict(best_par_sv_v["model"])
+mlp_vs_cs.load_state_dict(best_par_v_c["model"])
+
+npm = NPM([[mlp_sv1_v1, mlp_sv2_v2, mlp_sv3_v3],mlp_vs_cs], device="cuda")
 
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-root_path = f".//SetVelocity_to_RealVelocity//MLP_study_{timestamp}"
+root_path = f".//inputNN//neuro_physical_model//NPM_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
+# study = optuna.create_study(direction="minimize")
+# study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
 
-study = optuna.create_study(direction="minimize")
-study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
+# best_trial = study.best_trial
 
-best_trial = study.best_trial
+# result = {"Best trial number" : best_trial.number,
+#           "Best loss" : best_trial.value,
+#           "Best parameters" : best_trial.params,
+#           }
 
-result = {"Best trial number" : best_trial.number,
-          "Best loss" : best_trial.value,
-          "Best parameters" : best_trial.params,
-          }
+train_loader = DataLoader(train_dataset, batch_size = 128, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size = 128, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size = 128, shuffle = False)
 
-train_loader = DataLoader(train_dataset, batch_size = best_trial.params["batch_size"], shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size = best_trial.params["batch_size"], shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size = best_trial.params["batch_size"], shuffle = False)
-
-with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
-    json.dump(result, res, indent=4, ensure_ascii=False)
+# with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
+#     json.dump(result, res, indent=4, ensure_ascii=False)
 
 data = {"train" : train_loader,
          "val" : val_loader,
            "test" : test_loader}
 
-best_struct = [5] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [1]
-model = MLP(*best_struct).to(device)
+# best_struct = [5] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [1]
+# model = MLP(*best_struct).to(device)
 
-best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
-best_weight_path = os.path.join(root_path, best_trial_folder, "MLPconfig.pth")
-checkpoint = torch.load(best_weight_path, map_location=device)
-model.load_state_dict(checkpoint["model"])
+# best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
+# best_weight_path = os.path.join(root_path, best_trial_folder, "MLPconfig.pth")
+# checkpoint = torch.load(best_weight_path, map_location=device)
+# model.load_state_dict(checkpoint["model"])
 
 for key, value in data.items():
 
-    res = model.evaluate(value, scaler_y=scaler_y, name=key, save_path=root_path, device=device)
+    res = npm.evaluate(value, scaler_y=scaler_out, name=key, save_path=root_path, device=device)
 
     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
 
     metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
     metrics_df.drop("MAPE", inplace=True)
 
-    table_path = os.path.join(root_path, f"FINAL_MLP_metrics_{key}.csv")
+    table_path = os.path.join(root_path, f"FINAL_NPM_metrics_{key}.csv")
     metrics_df.to_csv(table_path, index_label="Метрики", encoding="utf-8-sig")
