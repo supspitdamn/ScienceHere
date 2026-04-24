@@ -35,21 +35,16 @@ features = ["m1setvel", "m2setvel", "m3setvel", "type__gray", "type__green", "ty
 features_extra = ["m1vel", "m2vel", "m3vel"]
 targets = ["m1cur", "m2cur", "m3cur"]
 
-scaler_in = StandardScaler()
-scaler_btw = StandardScaler()
-scaler_out = StandardScaler()
-
 df.info()
 
-x_train = torch.tensor(scaler_in.fit_transform(train[features]), dtype = torch.float32)
-y_train = torch.tensor(scaler_out.fit_transform(train[targets]), dtype = torch.float32)
-pimple = torch.tensor(scaler_btw.fit_transform(train[features_extra]), dtype = torch.float32)
+x_train = torch.tensor(train[features].values.astype(np.float32), dtype = torch.float32)
+y_train = torch.tensor(train[targets].values.astype(np.float32), dtype = torch.float32)
 
-x_val = torch.tensor(scaler_in.transform(val[features]), dtype = torch.float32)
-y_val = torch.tensor(scaler_out.transform(val[targets]), dtype = torch.float32)
+x_val = torch.tensor(val[features].values.astype(np.float32), dtype = torch.float32)
+y_val = torch.tensor(val[targets].values.astype(np.float32), dtype = torch.float32)
 
-x_test = torch.tensor(scaler_in.transform(test[features]), dtype = torch.float32)
-y_test = torch.tensor(scaler_out.transform(test[targets]), dtype = torch.float32)
+x_test = torch.tensor(test[features].values.astype(np.float32), dtype = torch.float32)
+y_test = torch.tensor(test[targets].values.astype(np.float32), dtype = torch.float32)
 
 train_dataset = TensorDataset(x_train, y_train)
 
@@ -298,7 +293,7 @@ class NPM(nn.Module):
 
         return self.stage_2(in_st2)
 
-    def evaluate(self, data_loader: DataLoader, scaler_y: StandardScaler, name: str, save_path: str, device: str = "cpu") -> dict:
+    def evaluate(self, data_loader: DataLoader, name: str, save_path: str, device: str = "cpu") -> dict:
 
         
         all_pred = []
@@ -311,10 +306,7 @@ class NPM(nn.Module):
             with torch.no_grad():
 
                 predict = self.forward(x).detach().cpu().numpy()
-                y = y.detach().cpu().numpy()
-
-                predict = (scaler_y.inverse_transform(predict))
-                true_value = (scaler_y.inverse_transform(y))
+                true_value = y.detach().cpu().numpy()
 
                 all_true.append(true_value)
                 all_pred.append(predict)
@@ -339,12 +331,12 @@ class NPM(nn.Module):
 
 
 
-best_par_sv_v = torch.load(".//inputNN//SetVelocity_To_RealVelocity//MLP_study_20260408_230054//MLP_33_5-64-64-1_Adam_0.00782255740687542_MSELoss_Batch_128//MLPconfig.pth")
-best_par_v_c = torch.load(".//inputNN//RealVelocity_To_Current//MLP_study_20260331_211138//MLP_7-96-96-96-3_Adam_0.000746242532647897_MSELoss_Batch_32//MLPconfig.pth")
-mlp_sv1_v1 = MLP(5, 64, 64, 1)
-mlp_sv2_v2 = MLP(5, 64, 64, 1)
-mlp_sv3_v3 = MLP(5, 64, 64, 1)
-mlp_vs_cs = MLP(7, 96, 96, 96, 3)
+best_par_sv_v = torch.load(r".//SetVelocity_To_RealVelocity\MLP_study_20260413_204155\MLP_11_5-32-32-32-32-32-1_Adam_0.0001735565808786231_MSELoss_Batch_32\MLPconfig.pth")
+best_par_v_c = torch.load(r".//RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")
+mlp_sv1_v1 = MLP(5, 32, 32, 32, 32, 32, 1)
+mlp_sv2_v2 = MLP(5, 32, 32, 32, 32, 32, 1)
+mlp_sv3_v3 = MLP(5, 32, 32, 32, 32, 32, 1)
+mlp_vs_cs = MLP(7, 64, 64, 64, 64, 3)
 
 mlp_sv1_v1.load_state_dict(best_par_sv_v["model"])
 mlp_sv2_v2.load_state_dict(best_par_sv_v["model"])
@@ -354,7 +346,7 @@ mlp_vs_cs.load_state_dict(best_par_v_c["model"])
 npm = NPM([[mlp_sv1_v1, mlp_sv2_v2, mlp_sv3_v3],mlp_vs_cs], device="cuda")
 
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-root_path = f".//inputNN//neuro_physical_model//NPM_study_{timestamp}"
+root_path = f".//neuro_physical_model//NPM_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 # study = optuna.create_study(direction="minimize")
 # study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
@@ -366,9 +358,9 @@ os.makedirs(root_path, exist_ok = True)
 #           "Best parameters" : best_trial.params,
 #           }
 
-train_loader = DataLoader(train_dataset, batch_size = 128, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size = 128, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size = 128, shuffle = False)
+train_loader = DataLoader(train_dataset, batch_size = 32, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size = 32, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size = 32, shuffle = False)
 
 # with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
 #     json.dump(result, res, indent=4, ensure_ascii=False)
@@ -387,7 +379,7 @@ data = {"train" : train_loader,
 
 for key, value in data.items():
 
-    res = npm.evaluate(value, scaler_y=scaler_out, name=key, save_path=root_path, device=device)
+    res = npm.evaluate(value, name=key, save_path=root_path, device=device)
 
     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
 
