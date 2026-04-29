@@ -31,7 +31,8 @@ df = df.dropna(subset=["m1setvel", "m2setvel", "m3setvel"])
 train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle = True)
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
 
-features = ["m1setvel", "m2setvel", "m3setvel", "type__gray", "type__green", "type__table", "type__brown"]
+features = ["m1setvel", "m2setvel", "m3setvel", "type__brown", "type__gray", "type__green", "type__table"]
+
 features_extra = ["m1vel", "m2vel", "m3vel"]
 targets = ["m1cur", "m2cur", "m3cur"]
 
@@ -281,15 +282,15 @@ class NPM(nn.Module):
         device = next(self.parameters()).device
         vec = vec.to(device).float()
 
-        surfs_scaled = vec[:, 3:7]
+        surfs = vec[:, 3:7]
 
-        v1_s = self.stage_1[0](torch.cat((vec[:, 0:1], surfs_scaled), dim=1))
-        v2_s = self.stage_1[1](torch.cat((vec[:, 1:2], surfs_scaled), dim=1))
-        v3_s = self.stage_1[2](torch.cat((vec[:, 2:3], surfs_scaled), dim=1))
+        v1_s = self.stage_1[0](torch.cat((vec[:, 0:1], surfs), dim=1))
+        v2_s = self.stage_1[1](torch.cat((vec[:, 1:2], surfs), dim=1))
+        v3_s = self.stage_1[2](torch.cat((vec[:, 2:3], surfs), dim=1))
 
-        v_scaled_st1 = torch.cat((v1_s, v2_s, v3_s), dim=1)
+        v_st1 = torch.cat((v1_s, v2_s, v3_s), dim=1)
 
-        in_st2 = torch.cat((v_scaled_st1, surfs_scaled), dim=1)
+        in_st2 = torch.cat((v_st1, surfs), dim=1)
 
         return self.stage_2(in_st2)
 
@@ -314,7 +315,7 @@ class NPM(nn.Module):
         all_pred = np.vstack(all_pred)
         all_true = np.vstack(all_true)
 
-        with open(os.path.join(save_path, "LOG.txt"), "w", encoding="utf-8") as log_txt:
+        with open(os.path.join(save_path, "LOG.txt"), "a", encoding="utf-8") as log_txt:
 
             mse = mean_squared_error(all_pred, all_true, multioutput="raw_values")
             mae = mean_absolute_error(all_pred, all_true, multioutput="raw_values")
@@ -331,8 +332,8 @@ class NPM(nn.Module):
 
 
 
-best_par_sv_v = torch.load(r".//SetVelocity_To_RealVelocity\MLP_study_20260413_204155\MLP_11_5-32-32-32-32-32-1_Adam_0.0001735565808786231_MSELoss_Batch_32\MLPconfig.pth")
-best_par_v_c = torch.load(r".//RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")
+best_par_sv_v = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\SetVelocity_To_RealVelocity\MLP_study_20260413_204155\MLP_11_5-32-32-32-32-32-1_Adam_0.0001735565808786231_MSELoss_Batch_32\MLPconfig.pth")
+best_par_v_c = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")
 mlp_sv1_v1 = MLP(5, 32, 32, 32, 32, 32, 1)
 mlp_sv2_v2 = MLP(5, 32, 32, 32, 32, 32, 1)
 mlp_sv3_v3 = MLP(5, 32, 32, 32, 32, 32, 1)
@@ -345,37 +346,19 @@ mlp_vs_cs.load_state_dict(best_par_v_c["model"])
 
 npm = NPM([[mlp_sv1_v1, mlp_sv2_v2, mlp_sv3_v3],mlp_vs_cs], device="cuda")
 
+npm.eval()
+
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 root_path = f".//neuro_physical_model//NPM_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
-# study = optuna.create_study(direction="minimize")
-# study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
-
-# best_trial = study.best_trial
-
-# result = {"Best trial number" : best_trial.number,
-#           "Best loss" : best_trial.value,
-#           "Best parameters" : best_trial.params,
-#           }
 
 train_loader = DataLoader(train_dataset, batch_size = 32, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size = 32, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size = 32, shuffle = False)
 
-# with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
-#     json.dump(result, res, indent=4, ensure_ascii=False)
-
 data = {"train" : train_loader,
          "val" : val_loader,
            "test" : test_loader}
-
-# best_struct = [5] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [1]
-# model = MLP(*best_struct).to(device)
-
-# best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
-# best_weight_path = os.path.join(root_path, best_trial_folder, "MLPconfig.pth")
-# checkpoint = torch.load(best_weight_path, map_location=device)
-# model.load_state_dict(checkpoint["model"])
 
 for key, value in data.items():
 
