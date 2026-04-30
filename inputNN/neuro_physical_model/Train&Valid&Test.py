@@ -2,7 +2,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optimizer
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -10,9 +9,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
 import numpy as np
 import os
-import optuna
 import datetime
 import json
+from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Обучение на {device}")
@@ -32,20 +31,19 @@ train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle =
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
 
 features = ["m1setvel", "m2setvel", "m3setvel", "type__brown", "type__gray", "type__green", "type__table"]
-
-features_extra = ["m1vel", "m2vel", "m3vel"]
+targets_extra = ["m1vel", "m2vel", "m3vel"]
 targets = ["m1cur", "m2cur", "m3cur"]
 
 df.info()
 
 x_train = torch.tensor(train[features].values.astype(np.float32), dtype = torch.float32)
-y_train = torch.tensor(train[targets].values.astype(np.float32), dtype = torch.float32)
+y_train = torch.tensor(train[targets + targets_extra].values.astype(np.float32), dtype = torch.float32)
 
 x_val = torch.tensor(val[features].values.astype(np.float32), dtype = torch.float32)
-y_val = torch.tensor(val[targets].values.astype(np.float32), dtype = torch.float32)
+y_val = torch.tensor(val[targets + targets_extra].values.astype(np.float32), dtype = torch.float32)
 
 x_test = torch.tensor(test[features].values.astype(np.float32), dtype = torch.float32)
-y_test = torch.tensor(test[targets].values.astype(np.float32), dtype = torch.float32)
+y_test = torch.tensor(test[targets + targets_extra].values.astype(np.float32), dtype = torch.float32)
 
 train_dataset = TensorDataset(x_train, y_train)
 
@@ -292,22 +290,20 @@ class NPM(nn.Module):
 
         in_st2 = torch.cat((v_st1, surfs), dim=1)
 
-        return self.stage_2(in_st2)
+        return self.stage_2(in_st2), v_st1
 
     def evaluate(self, data_loader: DataLoader, name: str, save_path: str, device: str = "cpu") -> dict:
-
-        
         all_pred = []
         all_true = []
         self.eval()
+        
         for x, y in data_loader:
-
             x, y = x.to(device), y.to(device)
-
             with torch.no_grad():
+                pred_cur, pred_vel = self.forward(x) 
 
-                predict = self.forward(x).detach().cpu().numpy()
-                true_value = y.detach().cpu().numpy()
+                predict = torch.cat([pred_cur, pred_vel], dim=1).cpu().numpy()
+                true_value = y.cpu().numpy()
 
                 all_true.append(true_value)
                 all_pred.append(predict)
@@ -315,38 +311,166 @@ class NPM(nn.Module):
         all_pred = np.vstack(all_pred)
         all_true = np.vstack(all_true)
 
-        with open(os.path.join(save_path, "LOG.txt"), "a", encoding="utf-8") as log_txt:
+        mse = mean_squared_error(all_true, all_pred, multioutput="raw_values")
+        mae = mean_absolute_error(all_true, all_pred, multioutput="raw_values")
+        r2 = r2_score(all_true, all_pred, multioutput="raw_values")
 
-            mse = mean_squared_error(all_pred, all_true, multioutput="raw_values")
-            mae = mean_absolute_error(all_pred, all_true, multioutput="raw_values")
-            mape = mean_absolute_percentage_error(all_pred, all_true, multioutput="raw_values")
-            r2 = r2_score(all_true, all_pred, multioutput="raw_values")
+        threshold = 0.1
+        mape_list = []
+        for i in range(all_true.shape[1]):
+            y_t = all_true[:, i]
+            y_p = all_pred[:, i]
+            mask = np.abs(y_t) > threshold
             
+            if np.any(mask):
+                # MAPE = mean( |(y_true - y_pred) / y_true| )
+                col_mape = np.mean(np.abs((y_t[mask] - y_p[mask]) / y_t[mask]))
+                mape_list.append(col_mape)
+            else:
+                mape_list.append(0.0)
+        
+        mape = np.array(mape_list)
+
+        with open(os.path.join(save_path, "LOG.txt"), "a", encoding="utf-8") as log_txt:
             if name == "test":
                 log_txt.write(20*"-"+"\n")
-                log_txt.write("Результаты для тестовой выборки:\n")
-                log_txt.write(f"Абсолютная ошибка (M1, M2, M3): {'  '.join(map(str, np.round(mae, 4)))}\n")
-                log_txt.write(f"Относительная ошибка (M1, M2, M3): {'  '.join(map(str, np.round(mape * 100, 4)))}\n")
+                log_txt.write("Результаты для тестовой выборки (MAPE отфильтрован по abs > 0.1):\n")
+                log_txt.write(f"MAE Токи (M1, M2, M3):     {'  '.join(map(str, np.round(mae[:3], 4)))}\n")
+                log_txt.write(f"MAE Скорости (V1, V2, V3):  {'  '.join(map(str, np.round(mae[3:], 4)))}\n")
+                log_txt.write(f"MAPE Токи (%):             {'  '.join(map(str, np.round(mape[:3] * 100, 4)))}\n")
+                log_txt.write(f"MAPE Скорости (%):          {'  '.join(map(str, np.round(mape[3:] * 100, 4)))}\n")
 
-        return {"MSE": tuple(mse), "MAE" : tuple(mae), "MAPE" : tuple(mape), "R2" : tuple(r2)}
+        return {
+            "MSE": tuple(mse), 
+            "MAE": tuple(mae), 
+            "MAPE": tuple(mape), 
+            "R2": tuple(r2)
+        }
 
+    
+    def fit(self, optimizer, loss, scheduler, train_loader, val_loader, epochs, root_path, patience = 10):
 
+        sum_train_losses = []
+        sum_val_losses = []
 
+        best_val_loss = float('inf')
+        counter = 0
+        best_model_path = os.path.join(root_path, "best_model.pth")
+
+        with open(os.path.join(root_path, "LOG.txt"), "a", encoding = "utf-8") as log_txt:
+
+            for idx in range(epochs):
+
+                train_losses = []
+                val_losses = []
+
+                self.train()
+
+                for x, y in tqdm(train_loader):
+
+                    x, y = x.to(device), y.to(device)
+
+                    pred_cur, pred_vel = self(x)
+
+                    loss_cur = loss(pred_cur, y[:,0:3])
+                    loss_vel = loss(pred_vel, y[:, 3:])
+
+                    summary_loss = loss_cur + loss_vel
+
+                    train_losses.append(summary_loss.item())
+
+                    optimizer.zero_grad()
+
+                    summary_loss.backward()
+
+                    optimizer.step()
+                
+                res_loss_train = sum(train_losses)/len(train_loader)
+
+                sum_train_losses.append(res_loss_train)
+                
+                self.eval()
+
+                for x, y in tqdm(val_loader):
+
+                    x, y = x.to(device), y.to(device)
+
+                    with torch.no_grad():
+
+                        pred_cur, pred_vel = self(x)
+
+                        loss_cur = loss(pred_cur, y[:, 0:3])
+                        loss_vel = loss(pred_vel, y[:, 3:])
+
+                        summary_loss = loss_cur + loss_vel
+
+                        val_losses.append(summary_loss.item())
+                
+                res_loss_val = sum(val_losses)/len(val_loader)
+
+                scheduler.step(res_loss_val)
+
+                current_lr = optimizer.param_groups[0]['lr']
+
+                epoch_log = (f"Эпоха {idx+1}/{epochs} | "
+                             f"Train Loss: {res_loss_train:.6f} | "
+                             f"Val Loss: {res_loss_val:.6f} | "
+                             f"LR: {current_lr:.8f}\n")
+                
+
+                print(epoch_log)
+                log_txt.write(epoch_log)
+
+                log_txt.flush()
+
+                sum_val_losses.append(res_loss_val)
+
+                if res_loss_val < best_val_loss:
+                    best_val_loss = res_loss_val
+                    counter = 0
+                    torch.save(self.state_dict(), best_model_path)
+                    msg = f"--- Найдена лучшая модель на эпохе {idx+1} (Loss: {best_val_loss:.6f}) ---\n"
+                else:
+                    counter += 1
+                    msg = f"Терпение: {counter} из {patience}\n"
+
+                print(msg)
+                log_txt.write(msg)
+
+                if counter >= patience:
+                    stop_msg = f"Early stopping на эпохе {idx+1}. Возвращаемся к лучшим весам.\n"
+                    print(stop_msg)
+                    log_txt.write(stop_msg)
+                    self.load_state_dict(torch.load(best_model_path))
+                    break 
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(sum_train_losses, label='Лосс тренировки')
+        plt.plot(sum_val_losses, label='Лосс валидации')
+        plt.xlabel('Эпохи')
+        plt.ylabel('Лосс')
+        plt.title('Лосс тренировки и валидации')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(root_path, "training_res.png"), dpi=300)
+        plt.close()
+
+best_npm_par = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260430_102057\best_model.pth")
 best_par_sv_v = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\SetVelocity_To_RealVelocity\MLP_study_20260413_204155\MLP_11_5-32-32-32-32-32-1_Adam_0.0001735565808786231_MSELoss_Batch_32\MLPconfig.pth")
 best_par_v_c = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")
+
 mlp_sv1_v1 = MLP(5, 32, 32, 32, 32, 32, 1)
 mlp_sv2_v2 = MLP(5, 32, 32, 32, 32, 32, 1)
 mlp_sv3_v3 = MLP(5, 32, 32, 32, 32, 32, 1)
 mlp_vs_cs = MLP(7, 64, 64, 64, 64, 3)
 
-mlp_sv1_v1.load_state_dict(best_par_sv_v["model"])
-mlp_sv2_v2.load_state_dict(best_par_sv_v["model"])
-mlp_sv3_v3.load_state_dict(best_par_sv_v["model"])
-mlp_vs_cs.load_state_dict(best_par_v_c["model"])
+# mlp_sv1_v1.load_state_dict(best_par_sv_v["model"])
+# mlp_sv2_v2.load_state_dict(best_par_sv_v["model"])
+# mlp_sv3_v3.load_state_dict(best_par_sv_v["model"])
+# mlp_vs_cs.load_state_dict(best_par_v_c["model"])
 
 npm = NPM([[mlp_sv1_v1, mlp_sv2_v2, mlp_sv3_v3],mlp_vs_cs], device="cuda")
-
-npm.eval()
+npm.load_state_dict(best_npm_par)
 
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 root_path = f".//neuro_physical_model//NPM_study_{timestamp}"
@@ -356,6 +480,12 @@ train_loader = DataLoader(train_dataset, batch_size = 32, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size = 32, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size = 32, shuffle = False)
 
+optimizer = torch.optim.Adam(npm.parameters(), 1e-3)
+loss = torch.nn.MSELoss()
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+
+# npm.fit(optimizer, loss, scheduler, train_loader, val_loader, 200, root_path)
+
 data = {"train" : train_loader,
          "val" : val_loader,
            "test" : test_loader}
@@ -363,8 +493,8 @@ data = {"train" : train_loader,
 for key, value in data.items():
 
     res = npm.evaluate(value, name=key, save_path=root_path, device=device)
-
-    metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
+    index_names = ["Ток М1", "Ток М2", "Ток М3", "Скорость М1", "Скорость М2", "Скорость М3"]
+    metrics_df = pd.DataFrame(res, index=index_names).T
 
     metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
     metrics_df.drop("MAPE", inplace=True)
