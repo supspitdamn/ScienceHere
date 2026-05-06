@@ -1,0 +1,17 @@
+{
+    "features": [
+        "m1vel",
+        "m2vel",
+        "m3vel"
+    ],
+    "best_trial": 21,
+    "best_loss": 0.016371376846951467,
+    "params": {
+        "lr": 0.0006730524835598518,
+        "num_layers": 5,
+        "hidden_size": 128,
+        "batch_size": 128,
+        "weight_decay": 2.138446165987003e-09
+    },
+    "best_model_path": "C:\\Users\\User\\Documents\\MyPythonProjects\\inputNN\\Currents_to_Slippage\\Seeking_for_best_features_05-05-2026_18-18-28\\feat_count_m1vel_m2vel_m3vel\\MLP_21_3-128-128-128-128-128-3_Adam_0.0006730524835598518_MSELoss_Batch_128\\MLPconfig.pth"
+}

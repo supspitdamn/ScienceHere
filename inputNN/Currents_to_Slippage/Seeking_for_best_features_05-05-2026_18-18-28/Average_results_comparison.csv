@@ -1,0 +1,6 @@
+﻿,Фичи,MAE,"MAPE, %"
+0,feat_count_m1cur_m2cur_m3cur,0.0868,24.91
+1,feat_count_m1cur_m2cur_m3cur_m1vel_m2vel_m3vel_surfs,0.07,20.63
+2,feat_count_m1cur_m2cur_m3cur_surfs,0.0766,22.66
+3,feat_count_m1vel_m2vel_m3vel,0.0881,24.89
+4,feat_count_m1vel_m2vel_m3vel_surfs,0.0716,21.21

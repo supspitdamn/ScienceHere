@@ -1,0 +1,21 @@
+{
+    "features": [
+        "m1cur",
+        "m2cur",
+        "m3cur",
+        "type__brown",
+        "type__gray",
+        "type__green",
+        "type__table"
+    ],
+    "best_trial": 8,
+    "best_loss": 0.014631480781783845,
+    "params": {
+        "lr": 0.0007620013930506492,
+        "num_layers": 5,
+        "hidden_size": 64,
+        "batch_size": 64,
+        "weight_decay": 6.64375487873049e-10
+    },
+    "best_model_path": "C:\\Users\\User\\Documents\\MyPythonProjects\\inputNN\\Currents_to_Slippage\\Seeking_for_best_features_05-05-2026_18-18-28\\feat_count_m1cur_m2cur_m3cur_type__brown_type__gray_type__green_type__table\\MLP_8_7-64-64-64-64-64-3_Adam_0.0007620013930506492_MSELoss_Batch_64\\MLPconfig.pth"
+}
