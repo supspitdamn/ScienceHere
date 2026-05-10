@@ -38,6 +38,7 @@ train, temp = train_test_split(df, test_size=0.2, random_state=42, shuffle=True)
 val, test = train_test_split(temp, test_size=0.5, random_state=42, shuffle=True)
 
 features = ["msetvel"] + [col for col in df.columns if col.startswith("type_")]
+print(features)
 targets = ["mvel"]
 
 df.info()
