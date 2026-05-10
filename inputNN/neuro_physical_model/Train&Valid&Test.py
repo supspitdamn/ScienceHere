@@ -18,9 +18,11 @@ print(f"Обучение на {device}")
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
-df = pd.get_dummies(df[["m1setvel", "m2setvel", "m3setvel", "m1cur", "m2cur", "m3cur", "surf", "m1vel", "m2vel", "m3vel"]], columns = ["surf"], prefix = "type_")
+df = pd.get_dummies(df[["m1setvel", "m2setvel", "m3setvel", "m1cur", "m2cur", "m3cur", "surf", "m1vel", "m2vel", "m3vel", "w1slip", "w2slip", "w3slip"]], columns = ["surf"], prefix = "type_")
 
 df.info()
+
+df = df.query("w1slip <= 1 and w2slip <= 1 and w3slip <= 1")
 
 df["m1setvel"] = pd.to_numeric(df["m1setvel"], errors="coerce")
 df["m2setvel"] = pd.to_numeric(df["m2setvel"], errors="coerce")
@@ -31,8 +33,10 @@ train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle =
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
 
 features = ["m1setvel", "m2setvel", "m3setvel", "type__brown", "type__gray", "type__green", "type__table"]
-targets_extra = ["m1vel", "m2vel", "m3vel"]
-targets = ["m1cur", "m2cur", "m3cur"]
+
+targets_extra = ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur"]
+
+targets = ["w1slip", "w2slip", "w3slip"]
 
 df.info()
 
@@ -272,6 +276,7 @@ class NPM(nn.Module):
         
         self.stage_1 = nn.ModuleList(seq_neur[0])
         self.stage_2 = seq_neur[1]
+        self.stage_3 = seq_neur[2]
 
         self.to(device)
     
@@ -286,11 +291,17 @@ class NPM(nn.Module):
         v2_s = self.stage_1[1](torch.cat((vec[:, 1:2], surfs), dim=1))
         v3_s = self.stage_1[2](torch.cat((vec[:, 2:3], surfs), dim=1))
 
-        v_st1 = torch.cat((v1_s, v2_s, v3_s), dim=1)
+        v_st1 = torch.cat((v1_s, v2_s, v3_s), dim=1) # Полученные скорсти
 
         in_st2 = torch.cat((v_st1, surfs), dim=1)
 
-        return self.stage_2(in_st2), v_st1
+        cur_st2 = self.stage_2(in_st2) # Полученные токи
+
+        in_st3 = torch.concat((cur_st2, v_st1, surfs), dim=1)
+
+        slip_st3 = self.stage_3(in_st3) # Полученные проскальзывания
+
+        return slip_st3, cur_st2, v_st1
 
     def evaluate(self, data_loader: DataLoader, name: str, save_path: str, device: str = "cpu") -> dict:
         all_pred = []
@@ -299,11 +310,14 @@ class NPM(nn.Module):
         
         for x, y in data_loader:
             x, y = x.to(device), y.to(device)
-            with torch.no_grad():
-                pred_cur, pred_vel = self.forward(x) 
 
-                predict = torch.cat([pred_cur, pred_vel], dim=1).cpu().numpy()
+            with torch.no_grad():
+
+                pred_slip, pred_cur, pred_vel = self(x) 
+
+                predict = torch.cat([pred_slip, pred_vel, pred_cur], dim=1).cpu().numpy()
                 true_value = y.cpu().numpy()
+                # predict = pred_slip.cpu().numpy()
 
                 all_true.append(true_value)
                 all_pred.append(predict)
@@ -323,22 +337,39 @@ class NPM(nn.Module):
             mask = np.abs(y_t) > threshold
             
             if np.any(mask):
-                # MAPE = mean( |(y_true - y_pred) / y_true| )
+
                 col_mape = np.mean(np.abs((y_t[mask] - y_p[mask]) / y_t[mask]))
                 mape_list.append(col_mape)
+
             else:
                 mape_list.append(0.0)
         
         mape = np.array(mape_list)
 
         with open(os.path.join(save_path, "LOG.txt"), "a", encoding="utf-8") as log_txt:
+
             if name == "test":
+
                 log_txt.write(20*"-"+"\n")
-                log_txt.write("Результаты для тестовой выборки (MAPE отфильтрован по abs > 0.1):\n")
-                log_txt.write(f"MAE Токи (M1, M2, M3):     {'  '.join(map(str, np.round(mae[:3], 4)))}\n")
-                log_txt.write(f"MAE Скорости (V1, V2, V3):  {'  '.join(map(str, np.round(mae[3:], 4)))}\n")
-                log_txt.write(f"MAPE Токи (%):             {'  '.join(map(str, np.round(mape[:3] * 100, 4)))}\n")
-                log_txt.write(f"MAPE Скорости (%):          {'  '.join(map(str, np.round(mape[3:] * 100, 4)))}\n")
+                log_txt.write("Результаты для тестовой выборки:\n")
+
+                log_txt.write(f"MAE Slip (S1, S2, S3):    {'  '.join(map(str, np.round(mae[0:3], 4)))}\n")
+                log_txt.write(f"MAE Скор. (V1, V2, V3):   {'  '.join(map(str, np.round(mae[3:6], 4)))}\n")
+                log_txt.write(f"MAE Токи (M1, M2, M3):    {'  '.join(map(str, np.round(mae[6:9], 4)))}\n")
+                
+                log_txt.write(f"MAPE Slip (%):           {'  '.join(map(str, np.round(mape[0:3] * 100, 4)))}\n")
+                log_txt.write(f"MAPE Скор. (%):          {'  '.join(map(str, np.round(mape[3:6] * 100, 4)))}\n")
+                log_txt.write(f"MAPE Токи (%):           {'  '.join(map(str, np.round(mape[6:9] * 100, 4)))}\n")
+
+
+
+
+            # if name == "test":
+            #     log_txt.write(20*"-"+"\n")
+            #     log_txt.write(f"Результаты для {name} (только Slip):\n")
+            #     # У нас теперь только 3 колонки (M1, M2, M3)
+            #     log_txt.write(f"MAE (M1, M2, M3):   {'  '.join(map(str, np.round(mae, 4)))}\n")
+            #     log_txt.write(f"MAPE (%) (M1, M2, M3): {'  '.join(map(str, np.round(mape * 100, 4)))}\n")
 
         return {
             "MSE": tuple(mse), 
@@ -347,7 +378,6 @@ class NPM(nn.Module):
             "R2": tuple(r2)
         }
 
-    
     def fit(self, optimizer, loss, scheduler, train_loader, val_loader, epochs, root_path, patience = 10):
 
         sum_train_losses = []
@@ -366,16 +396,17 @@ class NPM(nn.Module):
 
                 self.train()
 
-                for x, y in tqdm(train_loader):
+                for x, y in tqdm(train_loader, "Обучение"):
 
                     x, y = x.to(device), y.to(device)
 
-                    pred_cur, pred_vel = self(x)
+                    pred_slip, pred_cur, pred_vel = self(x)
 
-                    loss_cur = loss(pred_cur, y[:,0:3])
-                    loss_vel = loss(pred_vel, y[:, 3:])
+                    loss_slip = loss(pred_slip, y[:,0:3])
+                    loss_vel = loss(pred_vel, y[:, 3:6])
+                    loss_cur = loss(pred_cur, y[:, 6:])
 
-                    summary_loss = loss_cur + loss_vel
+                    summary_loss = loss_cur + loss_vel + loss_slip
 
                     train_losses.append(summary_loss.item())
 
@@ -391,18 +422,19 @@ class NPM(nn.Module):
                 
                 self.eval()
 
-                for x, y in tqdm(val_loader):
+                for x, y in tqdm(val_loader, "Валидация"):
 
                     x, y = x.to(device), y.to(device)
 
                     with torch.no_grad():
 
-                        pred_cur, pred_vel = self(x)
+                        pred_slip, pred_cur, pred_vel = self(x)
 
-                        loss_cur = loss(pred_cur, y[:, 0:3])
-                        loss_vel = loss(pred_vel, y[:, 3:])
+                        loss_slip = loss(pred_slip, y[:,0:3])
+                        loss_vel = loss(pred_vel, y[:, 3:6])
+                        loss_cur = loss(pred_cur, y[:, 6:])
 
-                        summary_loss = loss_cur + loss_vel
+                        summary_loss = loss_cur + loss_vel + loss_slip
 
                         val_losses.append(summary_loss.item())
                 
@@ -455,49 +487,92 @@ class NPM(nn.Module):
         plt.savefig(os.path.join(root_path, "training_res.png"), dpi=300)
         plt.close()
 
-best_npm_par = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260430_102057\best_model.pth")
+best_npm_par = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_06052026_230608\best_model.pth")
 best_par_sv_v = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\SetVelocity_To_RealVelocity\MLP_study_20260413_204155\MLP_11_5-32-32-32-32-32-1_Adam_0.0001735565808786231_MSELoss_Batch_32\MLPconfig.pth")
 best_par_v_c = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")
+best_par_v_c_s__sl = torch.load(r"C:\\Users\\User\\Documents\\MyPythonProjects\\inputNN\\Currents_to_Slippage\\Seeking_for_best_features_05-05-2026_18-18-28\\feat_count_m1cur_m2cur_m3cur_m1vel_m2vel_m3vel_surfs\\MLP_31_10-64-64-64-3_Adam_0.0009816432611570356_MSELoss_Batch_64\\MLPconfig.pth")
 
-mlp_sv1_v1 = MLP(5, 32, 32, 32, 32, 32, 1)
-mlp_sv2_v2 = MLP(5, 32, 32, 32, 32, 32, 1)
-mlp_sv3_v3 = MLP(5, 32, 32, 32, 32, 32, 1)
-mlp_vs_cs = MLP(7, 64, 64, 64, 64, 3)
+def get_base_mlps():
 
-# mlp_sv1_v1.load_state_dict(best_par_sv_v["model"])
-# mlp_sv2_v2.load_state_dict(best_par_sv_v["model"])
-# mlp_sv3_v3.load_state_dict(best_par_sv_v["model"])
-# mlp_vs_cs.load_state_dict(best_par_v_c["model"])
+    m1 = MLP(5, 32, 32, 32, 32, 32, 1)
+    m2 = MLP(5, 32, 32, 32, 32, 32, 1)
+    m3 = MLP(5, 32, 32, 32, 32, 32, 1)
+    mvc = MLP(7, 64, 64, 64, 64, 3)
+    mvcsl = MLP(10, 64, 64, 64, 3)
 
-npm = NPM([[mlp_sv1_v1, mlp_sv2_v2, mlp_sv3_v3],mlp_vs_cs], device="cuda")
-npm.load_state_dict(best_npm_par)
+    m1.load_state_dict(best_par_sv_v["model"])
+    m2.load_state_dict(best_par_sv_v["model"])
+    m3.load_state_dict(best_par_sv_v["model"])
+    mvc.load_state_dict(best_par_v_c["model"])
+    mvcsl.load_state_dict(best_par_v_c_s__sl["model"])
 
-timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-root_path = f".//neuro_physical_model//NPM_study_{timestamp}"
-os.makedirs(root_path, exist_ok = True)
+    return [m1, m2, m3], mvc, mvcsl
 
-train_loader = DataLoader(train_dataset, batch_size = 32, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size = 32, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size = 32, shuffle = False)
+mlps_t, mvc_t, mvcsl_t = get_base_mlps()
+npm_trained = NPM([mlps_t, mvc_t, mvcsl_t], device="cuda")
+npm_trained.load_state_dict(best_npm_par)
 
-optimizer = torch.optim.Adam(npm.parameters(), 1e-3)
+mlps_s, mvc_s, mvcsl_s = get_base_mlps()
+npm_simple = NPM([mlps_s, mvc_s, mvcsl_s], device="cuda")
+
 loss = torch.nn.MSELoss()
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+op = torch.optim.Adam(npm_simple.parameters(), lr = 1e-3)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    op, 
+    patience=12, 
+    factor=0.5
+)
 
-# npm.fit(optimizer, loss, scheduler, train_loader, val_loader, 200, root_path)
+root_path = f".//neuro_physical_model//NPM_comparison"
+# root_path = f".//neuro_physical_model//NPM_study_{datetime.datetime.now().strftime("%d%m%Y_%H%M%S")}"
 
-data = {"train" : train_loader,
-         "val" : val_loader,
-           "test" : test_loader}
+os.makedirs(root_path, exist_ok=True)
+
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, pin_memory=True)
+val_loader = DataLoader(val_dataset, batch_size=32, shuffle=True, pin_memory=True)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=True, pin_memory=True)
+
+# npm_simple.fit(op, loss, scheduler, train_loader, val_loader, 200, root_path, patience=15)
+
+data = {"test": train_loader}
+        # "val": val_loader,
+        # "test": test_loader}
+
+
+columns_names = ["Проскальзывание М1", "Проскальзывание М2", "Проскальзывание М3", "Ток М1", "Ток М2", "Ток М3", "Скорость М1", "Скорость М2", "Скорость М3", "Сумма"]
+rows_names = ["Склеенная", "Тренированная", "Разность"]
+
+import numpy as np
+
+# for key, value in data.items():
+
+#     res = npm_simple.evaluate(value, name=key, save_path=root_path, device=device)
+
+#     metrics_df = pd.DataFrame(res, index=["Двигатель 1", "Двигатель 2", "Двигатель 3"]).T
+
+#     metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
+#     metrics_df.drop("MAPE", inplace=True)
+
+#     table_path = os.path.join(root_path, f"FINAL_MLP_metrics_1_{key}.csv")
+#     metrics_df.to_csv(table_path, index_label="Метрики", encoding="utf-8-sig")
+
+
 
 for key, value in data.items():
 
-    res = npm.evaluate(value, name=key, save_path=root_path, device=device)
-    index_names = ["Ток М1", "Ток М2", "Ток М3", "Скорость М1", "Скорость М2", "Скорость М3"]
-    metrics_df = pd.DataFrame(res, index=index_names).T
+    res_t = list(npm_trained.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [None]*6))
+    res_s = list(npm_simple.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [None]*6))
 
-    metrics_df.loc["MAPE, %"] = metrics_df.loc["MAPE"]*100
-    metrics_df.drop("MAPE", inplace=True)
+    res_t.append(sum(res_t))
+    res_s.append(sum(res_s))
 
-    table_path = os.path.join(root_path, f"FINAL_NPM_metrics_{key}.csv")
-    metrics_df.to_csv(table_path, index_label="Метрики", encoding="utf-8-sig")
+    res_diff = np.array(res_t) - np.array(res_s)
+
+    final_df = pd.DataFrame(
+        data=[res_s, res_t, res_diff], 
+        index=rows_names, 
+        columns=columns_names
+    )
+
+    final_df.to_excel(os.path.join(root_path, f"FINAL_NPM_metrics_{key}.xlsx"), index=True)
+
