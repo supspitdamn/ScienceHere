@@ -10,8 +10,8 @@ setvel_cols = ["m1setvel", "m2setvel", "m3setvel"]
 print(f"{df[df["w1linslip"].abs() < 0.01].shape[0]} из {df.shape[0]}")
 print(max(df["w1slip"]))
 
-df["w1slip"].hist(bins=50)  # bins — это количество столбиков
-plt.title("Распределение проскальзывания w1slip")
+df["omega"].hist(bins=50)  # bins — это количество столбиков
+plt.title("Распределение vy")
 plt.xlabel("Значение")
 plt.ylabel("Частота")
 plt.show()
