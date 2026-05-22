@@ -31,8 +31,8 @@ df = df[cols_to_keep]
 
 df = pd.get_dummies(df, columns=["surf"], prefix="type", prefix_sep="_")
 
-train, temp = train_test_split(df, test_size=0.2, random_state=42, shuffle=True, stratify=df["surf"] if "surf" in df.columns else None)
-val, test = train_test_split(temp, test_size=0.5, random_state=42, shuffle=True, stratify=None)
+train, temp = train_test_split(df, test_size=0.2, random_state=42, shuffle=True)
+val, test = train_test_split(temp, test_size=0.5, random_state=42, shuffle=True)
 
 features = ["m1setvel", "m2setvel", "m3setvel", "type_brown", "type_gray", "type_green", "type_table"]
 targets_extra = ["w1slip", "w2slip", "w3slip", "m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur"]
@@ -810,8 +810,9 @@ class NPM(nn.Module):
             with torch.no_grad():
                 pred_delta, pred_slip, pred_cur, pred_vel = self(x) 
 
-                predict = torch.cat([pred_delta, pred_slip, pred_vel, pred_cur], dim=1).cpu().numpy()
+                predict = torch.cat([pred_delta, pred_slip, pred_cur, pred_vel], dim=1).cpu().numpy()
                 true_value = y.cpu().numpy()
+                true_value = np.hstack([true_value[:, 0:3], true_value[:, 3:6], true_value[:, 9:12], true_value[:, 6:9]])
 
                 all_true.append(true_value)
                 all_pred.append(predict)
@@ -1063,5 +1064,6 @@ for key, value in data.items():
         index=rows_names, 
         columns=columns_names
     )
-
+    # print(final_df[["Скорость М1", "Скорость М2", "Скорость М3", "Ток М1", "Ток М2", "Ток М3"]])
     final_df.to_excel(os.path.join(root_path, f"FINAL_NPM_metrics_{key}.xlsx"), index=True)
+
