@@ -270,32 +270,32 @@ timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 root_path = f".//RealVelocity_To_Current//MLP_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 
-study = optuna.create_study(direction="minimize")
-study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
+# study = optuna.create_study(direction="minimize")
+# study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
 
-best_trial = study.best_trial
+# best_trial = study.best_trial
 
-result = {"Best trial number" : best_trial.number,
-          "Best loss" : best_trial.value,
-          "Best parameters" : best_trial.params,
-          }
+# result = {"Best trial number" : best_trial.number,
+#           "Best loss" : best_trial.value,
+#           "Best parameters" : best_trial.params,
+#           }
 
-train_loader = DataLoader(train_dataset, batch_size = best_trial.params["batch_size"], shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size = best_trial.params["batch_size"], shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size = best_trial.params["batch_size"], shuffle = False)
+train_loader = DataLoader(train_dataset, batch_size = 128, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size = 512, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size = 512, shuffle = False)
 
-with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
-    json.dump(result, res, indent=4, ensure_ascii=False)
+# with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
+#     json.dump(result, res, indent=4, ensure_ascii=False)
 
 data = {"train" : train_loader,
          "val" : val_loader,
            "test" : test_loader}
 
-best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
-model = MLP(*best_struct).to(device)
+# best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
+model = MLP(7,64,64,64,64,3).to(device)
 
-best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
-best_weight_path = os.path.join(root_path, best_trial_folder, "MLPconfig.pth")
+# best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
+best_weight_path = os.path.join(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")
 checkpoint = torch.load(best_weight_path, map_location=device)
 model.load_state_dict(checkpoint["model"])
 
@@ -309,4 +309,6 @@ for key, value in data.items():
     metrics_df.drop("MAPE", inplace=True)
 
     table_path = os.path.join(root_path, f"FINAL_MLP_metrics_{key}.csv")
-    metrics_df.to_csv(table_path, index_label="Метрики", encoding="utf-8-sig")
+    print(metrics_df)
+    
+    # metrics_df.to_csv(table_path, index_label="Метрики", encoding="utf-8-sig")
