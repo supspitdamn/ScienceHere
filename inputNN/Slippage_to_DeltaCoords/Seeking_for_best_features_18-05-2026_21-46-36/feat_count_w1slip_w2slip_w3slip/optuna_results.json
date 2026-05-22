@@ -1,0 +1,17 @@
+{
+    "features": [
+        "w1slip",
+        "w2slip",
+        "w3slip"
+    ],
+    "best_trial": 15,
+    "best_loss": 0.0017902378800927715,
+    "params": {
+        "lr": 0.00010019622830352492,
+        "num_layers": 1,
+        "hidden_size": 112,
+        "batch_size": 16,
+        "weight_decay": 1.1154884139503104e-06
+    },
+    "best_model_path": "C:\\Users\\User\\Documents\\MyPythonProjects\\inputNN\\Slippage_to_DeltaCoords\\Seeking_for_best_features_18-05-2026_21-46-36\\feat_count_w1slip_w2slip_w3slip\\MLPconfig.pth"
+}
