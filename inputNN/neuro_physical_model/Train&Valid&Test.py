@@ -38,17 +38,17 @@ features = ["m1setvel", "m2setvel", "m3setvel", "type_brown", "type_gray", "type
 targets_extra = ["w1slip", "w2slip", "w3slip", "m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur"]
 targets = ["vx", "vy", "omega"]
 
-x_train = torch.tensor(train[features].values.astype(np.float32), dtype=torch.float32)
-y_train = torch.tensor(train[targets + targets_extra].values.astype(np.float32), dtype=torch.float32)
+# x_train = torch.tensor(train[features].values.astype(np.float32), dtype=torch.float32)
+# y_train = torch.tensor(train[targets + targets_extra].values.astype(np.float32), dtype=torch.float32)
 
-x_val = torch.tensor(val[features].values.astype(np.float32), dtype=torch.float32)
-y_val = torch.tensor(val[targets + targets_extra].values.astype(np.float32), dtype=torch.float32)
+# x_val = torch.tensor(val[features].values.astype(np.float32), dtype=torch.float32)
+# y_val = torch.tensor(val[targets + targets_extra].values.astype(np.float32), dtype=torch.float32)
 
-x_test = torch.tensor(test[features].values.astype(np.float32), dtype=torch.float32)
-y_test = torch.tensor(test[targets + targets_extra].values.astype(np.float32), dtype=torch.float32)
+x_test = torch.tensor(df[features].values.astype(np.float32), dtype=torch.float32)
+y_test = torch.tensor(df[targets + targets_extra].values.astype(np.float32), dtype=torch.float32)
 
-train_dataset = TensorDataset(x_train, y_train)
-val_dataset = TensorDataset(x_val, y_val)
+# train_dataset = TensorDataset(x_train, y_train)
+# val_dataset = TensorDataset(x_val, y_val)
 test_dataset = TensorDataset(x_test, y_test)
 
 class ResBlock(nn.Module):
@@ -960,11 +960,17 @@ class NPM(nn.Module):
 best_npm_par = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_21052026_104059_FINE_TUNING_DELTA\best_model.pth")
 best_npm_par_zero = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260521_125352_ZERO_COND\best_model.pth")
 best_npm_par_zero_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260521_152100\best_model.pth")
+best_npm_par_trained_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260524_143653_rassmotrenie_vseh_variantov_modeley_plus_norm_doobuch_res\best_model.pth")
 
 best_par_sv_v = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\SetVelocity_To_RealVelocity\MLP_study_20260413_204155\MLP_11_5-32-32-32-32-32-1_Adam_0.0001735565808786231_MSELoss_Batch_32\MLPconfig.pth")
 best_par_v_c = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")
 best_par_v_c_s__sl = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Currents_to_Slippage\Seeking_for_best_features_05-05-2026_18-18-28\feat_count_m1cur_m2cur_m3cur_m1vel_m2vel_m3vel_surfs\MLP_31_10-64-64-64-3_Adam_0.0009816432611570356_MSELoss_Batch_64\MLPconfig.pth")
-best_par_v_sl_s__delta = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Slippage_to_DeltaCoords\Seeking_for_best_features_19-05-2026_08-52-39\feat_count_m1vel_m2vel_m3vel_w1slip_w2slip_w3slip_type__brown_type__gray_type__green_type__table\MLP_17_10-128-128-128-3_Adam_0.0019297113996488578_LogCoshLoss_Batch_128\MLPconfig.pth")
+best_par_v_sl_s__delta = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Slippage_to_DeltaCoords\peredelka_modeli_izza_privat_24-05-2026_21-40-36\MLPconfig.pth")
+
+best_par_sv_v_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\SetVelocity_To_RealVelocity\MLP_study_20260521_143419\MLPconfig.pth")
+best_par_v_c_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_RES_study_20260523_223518_hids_128\MLPconfig.pth")
+best_par_v_c_s__sl_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Currents_to_Slippage\MLP_RES_study_20260524_101812_hids_128\MLPconfig.pth")
+best_par_v_sl_s__delta_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Slippage_to_DeltaCoords\MLP_RES_study_20260524_104825\MLPconfig.pth")
 
 def get_base_mlps():
     m1 = MLP(5, 32, 32, 32, 32, 32, 1)
@@ -980,13 +986,7 @@ def get_base_mlps():
     mvc.load_state_dict(best_par_v_c["model"])
     mvcsl.load_state_dict(best_par_v_c_s__sl["model"])
 
-    old_state_dict = best_par_v_sl_s__delta["model"]
-    new_state_dict = {}
-    for key, value in old_state_dict.items():
-        new_key = key.replace("_MLP__layers", "_MLP_NORM__layers")
-        new_state_dict[new_key] = value
-
-    mvslsd.load_state_dict(new_state_dict)
+    mvslsd.load_state_dict(best_par_v_sl_s__delta["model"])
     return [m1, m2, m3], mvc, mvcsl, mvslsd
 
 def get_norm_base_mlps():
@@ -998,7 +998,7 @@ def get_norm_base_mlps():
     mvslsd = MLP_NORM(10, 128, 128, 128, 3)
     return [m1, m2, m3], mvc, mvcsl, mvslsd
 
-def get_res_base_mlps():
+def get_res_simp_base_mlps():
     # Параметры: (входные_фичи, скрытая_размерность, количество_резидуальных_блоков, выходы)
     m1 = MLP_RES(5, 32, 3, 1)      # 3 блока (6 линейных слоев)
     m2 = MLP_RES(5, 32, 3, 1)      
@@ -1009,34 +1009,65 @@ def get_res_base_mlps():
 
     return [m1, m2, m3], mvc, mvcsl, mvslsd
 
+def get_res_base_mlps():
+    # Параметры: (входные_фичи, скрытая_размерность, количество_резидуальных_блоков, выходы)
+    m1 = MLP_RES(5, 32, 3, 1)      # 3 блока (6 линейных слоев)
+    m2 = MLP_RES(5, 32, 3, 1)      
+    m3 = MLP_RES(5, 32, 3, 1)      
+    mvc = MLP_RES(7, 128, 3, 3)     # 3 блока (6 линейных слоев)
+    mvcsl = MLP_RES(10, 128, 3, 3)  # 3 блока (6 линейных слоев)
+    mvslsd = MLP_RES(10, 128, 3, 3) # 4 блока (8 линейных слоев) для самого глубокого узла
+
+    m1.load_state_dict(best_par_sv_v_res["model"])
+    m2.load_state_dict(best_par_sv_v_res["model"])
+    m3.load_state_dict(best_par_sv_v_res["model"])
+    mvc.load_state_dict(best_par_v_c_res["model"])
+    mvcsl.load_state_dict(best_par_v_c_s__sl_res["model"])
+    mvslsd.load_state_dict(best_par_v_sl_s__delta_res["model"])
+
+    return [m1, m2, m3], mvc, mvcsl, mvslsd
+
+# Дообученная модель простая (без рез кон)
 mlps_t, mvc_t, mvcsl_t, mvslsd_t = get_base_mlps()
 npm_trained = NPM([mlps_t, mvc_t, mvcsl_t, mvslsd_t], device="cuda")
 npm_trained.load_state_dict(best_npm_par)
 
+# Модель склеенная простоая (без рез кон)
 mlps_s, mvc_s, mvcsl_s, mvslsd_s = get_base_mlps()
 npm_simple = NPM([mlps_s, mvc_s, mvcsl_s, mvslsd_s], device="cuda")
 
+# Модель простая с каймановскими весами простая (без рез кон)
 mlps_blank, mvc_blank, mvcsl_blank, mvslsd_blank = get_norm_base_mlps()
 npm_zero_cond = NPM([mlps_blank, mvc_blank, mvcsl_blank, mvslsd_blank], device="cuda", kaiman_weight_init=True)
 npm_zero_cond.load_state_dict(best_npm_par_zero)
 
-mlps_res_blank, mvc_s_res_blank, mvcsl_s_res_blank, mvslsd_res_blank = get_res_base_mlps()
+# Модель с каймановскими весами (с рез кон)
+mlps_res_blank, mvc_s_res_blank, mvcsl_s_res_blank, mvslsd_res_blank = get_res_simp_base_mlps()
 npm_zero_cond_res = NPM([mlps_res_blank, mvc_s_res_blank, mvcsl_s_res_blank, mvslsd_res_blank], device = "cuda", kaiman_weight_init=True)
 npm_zero_cond_res.load_state_dict(best_npm_par_zero_res)
 
-# root_path = r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model"
-# folder_path = os.path.join(root_path, f"NPM_study_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}")
-# os.makedirs(folder_path, exist_ok=True)
+# Модель склеенная (с рез кон)
+mlps_res_glue, mvc_s_res_glue, mvcsl_s_res_glue, mvslsd_res_glue = get_res_base_mlps()
+npm_glued_res = NPM([mlps_res_glue, mvc_s_res_glue, mvcsl_s_res_glue, mvslsd_res_glue], device="cuda")
 
-train_loader = DataLoader(train_dataset, batch_size=128, pin_memory=True)
-val_loader = DataLoader(val_dataset, batch_size=512, pin_memory=True)
+# Модель склеенная дообученная (с рез кон)
+mlps_res_glue_t, mvc_s_res_glue_t, mvcsl_s_res_glue_t, mvslsd_res_glue_t = get_res_base_mlps()
+npm_glued_res_t = NPM([mlps_res_glue_t, mvc_s_res_glue_t, mvcsl_s_res_glue_t, mvslsd_res_glue_t], device="cuda")
+npm_glued_res_t.load_state_dict(best_npm_par_trained_res)
+
+root_path = r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model"
+folder_path = os.path.join(root_path, f"NPM_study_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}_rassmotrenie_vseh_variantov_modeley_plus_norm_doobuch_res")
+os.makedirs(folder_path, exist_ok=True)
+
+# train_loader = DataLoader(train_dataset, batch_size=128, pin_memory=True)
+# val_loader = DataLoader(val_dataset, batch_size=512, pin_memory=True)
 test_loader = DataLoader(test_dataset, batch_size=512, pin_memory=True)
 
-op = torch.optim.Adam(params=npm_zero_cond_res.parameters(), lr=1e-3, weight_decay=1e-5)
+op = torch.optim.Adam(params=npm_glued_res_t.parameters(), lr=1e-4, weight_decay=1e-5)
 loss = torch.nn.MSELoss()
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(op, factor=0.5, patience=10)
 
-# npm_zero_cond_res.fit(op, loss, scheduler, train_loader, val_loader, epochs=200, root_path=folder_path, patience=25)
+# npm_glued_res_t.fit(op, loss, scheduler, train_loader, val_loader, epochs=200, root_path=folder_path, patience=25)
 
 root_path = f".//neuro_physical_model//NPM_comparison"
 os.makedirs(root_path, exist_ok=True)
@@ -1044,26 +1075,32 @@ os.makedirs(root_path, exist_ok=True)
 data = {"test": test_loader}
 
 columns_names = ["Дельта Х", "Дельта У", "Дельта Фи", "Проскальзывание М1", "Проскальзывание М2", "Проскальзывание М3", "Ток М1", "Ток М2", "Ток М3", "Скорость М1", "Скорость М2", "Скорость М3", "Сумма"]
-rows_names = ["Склеенная", "Тренированная", "Обученная с нуля", "Обученная с нуля + остаточные связи", "Разность (Скл - Трен)"]
+rows_names = ["Склеенная", "Тренированная", "Обученная с нуля", "Обученная с нуля + остаточные связи", "Склеенная + остаточные связи", "Тренированная + остаточные связи", "Разность (Скл - Трен)"]
 
 for key, value in data.items():
+
     res_t = list(npm_trained.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [0]*12))
     res_s = list(npm_simple.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [0]*12))
     res_z = list(npm_zero_cond.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [0]*12))
     res_z_res = list(npm_zero_cond_res.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [0]*12))
+    res_glued_res = list(npm_glued_res.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [0]*12))
+    res_glued_res_t = list(npm_glued_res_t.evaluate(value, name=key, save_path=root_path, device=device).get("MAE", [0]*12))
 
     res_t.append(sum(res_t))
     res_s.append(sum(res_s))
     res_z.append(sum(res_z))
     res_z_res.append(sum(res_z_res))
+    res_glued_res.append(sum(res_glued_res))
+    res_glued_res_t.append(sum(res_glued_res_t))
 
     res_diff = np.array(res_s) - np.array(res_t)
 
     final_df = pd.DataFrame(
-        data=[res_s, res_t, res_z, res_z_res, list(res_diff)], 
+        data=[res_s, res_t, res_z, res_z_res, res_glued_res, res_glued_res_t, list(res_diff)], 
         index=rows_names, 
         columns=columns_names
     )
+
     # print(final_df[["Скорость М1", "Скорость М2", "Скорость М3", "Ток М1", "Ток М2", "Ток М3"]])
     final_df.to_excel(os.path.join(root_path, f"FINAL_NPM_metrics_{key}.xlsx"), index=True)
 

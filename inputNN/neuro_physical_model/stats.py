@@ -8,21 +8,25 @@ df_info = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filte
 
 df_info[["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip", "vx", "vy", "omega"][::-1]].describe().to_csv("features_stats.csv", sep=";")
 
+separated_lst = ["Простые без остаточных связей по отдельности", 0.0017966036,0.0018164061,0.0038148174  ,0.07165958,0.064241745,0.07403059  ,0.055032067,0.056803983,0.053757574,  0.53941023,0.53941023,0.53941023, 0]
 df = pd.read_excel(os.path.join(root_path, "FINAL_NPM_metrics_test.xlsx"))
+df.iloc[-1] = separated_lst
 
 print(df_info[["vx", "vy", "omega", "w1slip", "w2slip", "w3slip", "m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur"]])
 print(df)
 
-models = df.iloc[:-1, 0].to_list()
+models = df.iloc[:, 0].to_list()
 print(models)
 
 columns = list(df.columns[1:-1])
+
 mean_value = torch.tensor(df_info[["vx", "vy", "omega", "w1slip", "w2slip", "w3slip", "m1cur", "m2cur", "m3cur", "m1vel", "m2vel", "m3vel"]].values).abs().mean(dim=0)
+
 print(mean_value)
 print(columns)
 
 plt.figure(figsize=(14, 7))
-for i in range(df.shape[0] - 1):
+for i in range(df.shape[0]):
 
     row_values = df[columns].iloc[i].values
     y_values = [row_values[idx] / abs(mean_value[idx].item()) for idx in range(len(columns))]

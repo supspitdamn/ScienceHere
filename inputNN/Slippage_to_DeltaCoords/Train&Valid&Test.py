@@ -25,7 +25,7 @@ class LogCoshLoss(nn.Module):
         diff = pred - target
         return torch.mean(torch.log(torch.cosh(diff)))
 
-class MLP(nn.Module):
+class MLP_NORM(nn.Module):
 
     def __init__(self, *args):
 
@@ -218,7 +218,7 @@ class MLP(nn.Module):
 
         layers_struct = [input_size] + [hidden_size]*num_layers + [output_dim]
 
-        trial_model = MLP(*layers_struct).to(device=device)
+        trial_model = MLP_NORM(*layers_struct).to(device=device)
 
         trial_op = torch.optim.Adam(trial_model.parameters(), lr=lr, weight_decay=weight_decay)
         trial_loss = LogCoshLoss()
@@ -260,7 +260,7 @@ if __name__ == "__main__":
 
     timestamp_main = datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     root_dir = r"C:\Users\User\Documents\MyPythonProjects\inputNN\Slippage_to_DeltaCoords"
-    root_path = os.path.join(root_dir, f"Seeking_for_best_features_{timestamp_main}")
+    root_path = os.path.join(root_dir, f"peredelka_modeli_izza_privat_{timestamp_main}")
     os.makedirs(root_path, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -303,17 +303,17 @@ if __name__ == "__main__":
         # ["m1cur", "m2cur", "m3cur"],
         # ["w1slip", "w2slip", "w3slip"],
         # ["type__brown", "type__gray", "type__green", "type__table"],
-        ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur"],
-        ["m1vel", "m2vel", "m3vel", "w1slip", "w2slip", "w3slip"],
-        ["m1vel", "m2vel", "m3vel", "type__brown", "type__gray", "type__green", "type__table"],
-        ["m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip"],
-        ["m1cur", "m2cur", "m3cur", "type__brown", "type__gray", "type__green", "type__table"],
-        ["w1slip", "w2slip", "w3slip", "type__brown", "type__gray", "type__green", "type__table"],
-        ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip"],
-        ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "type__brown", "type__gray", "type__green", "type__table"],
+        # ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur"],
+        # ["m1vel", "m2vel", "m3vel", "w1slip", "w2slip", "w3slip"],
+        # ["m1vel", "m2vel", "m3vel", "type__brown", "type__gray", "type__green", "type__table"],
+        # ["m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip"],
+        # ["m1cur", "m2cur", "m3cur", "type__brown", "type__gray", "type__green", "type__table"],
+        # ["w1slip", "w2slip", "w3slip", "type__brown", "type__gray", "type__green", "type__table"],
+        # ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip"],
+        # ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "type__brown", "type__gray", "type__green", "type__table"],
         ["m1vel", "m2vel", "m3vel", "w1slip", "w2slip", "w3slip", "type__brown", "type__gray", "type__green", "type__table"],
-        ["m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip", "type__brown", "type__gray", "type__green", "type__table"],
-        ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip", "type__brown", "type__gray", "type__green", "type__table"]
+        # ["m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip", "type__brown", "type__gray", "type__green", "type__table"],
+        # ["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip", "type__brown", "type__gray", "type__green", "type__table"]
     ]
 
     for features in features_variations:
@@ -337,47 +337,59 @@ if __name__ == "__main__":
         current_feat_path = os.path.join(root_path, feat_folder_name)
         os.makedirs(current_feat_path, exist_ok=True)
 
-        study = optuna.create_study(direction="minimize")
+        # study = optuna.create_study(direction="minimize")
 
         input_dim = len(features)
         output_dim = len(targets)
 
-        study.optimize(lambda trial: MLP.objective(trial, 
-                                                   input_dim, 
-                                                   output_dim, 
-                                                   train_dataset, 
-                                                   val_dataset, 
-                                                   current_feat_path, 
-                                                   device), 
-                                                   n_trials=20)
+        # study.optimize(lambda trial: MLP_NORM.objective(trial, 
+        #                                            input_dim, 
+        #                                            output_dim, 
+        #                                            train_dataset, 
+        #                                            val_dataset, 
+        #                                            current_feat_path, 
+        #                                            device), 
+        #                                            n_trials=20)
 
-        best_trial = study.best_trial
-        best_struct = [input_dim] + [best_trial.params["hidden_size"]] * best_trial.params["num_layers"] + [output_dim]
-        folder_name = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_LogCoshLoss_Batch_{best_trial.params['batch_size']}"
+
+        # best_trial = study.best_trial
+        # best_struct = [input_dim] + [best_trial.params["hidden_size"]] * best_trial.params["num_layers"] + [output_dim]
+        folder_name = f"MODEL_{datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")}"
         
         best_weight_path = os.path.abspath(os.path.join(current_feat_path, folder_name, "MLPconfig.pth"))
         print(best_weight_path)
 
-        result = {
-            "features": features,
-            "best_trial": best_trial.number,
-            "best_loss": best_trial.value,
-            "params": best_trial.params,
-            "best_model_path": best_weight_path
-        }
 
-        with open(os.path.join(current_feat_path, "optuna_results.json"), "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=4, ensure_ascii=False)
+        # result = {
+        #     "features": features,
+        #     "best_trial": best_trial.number,
+        #     "best_loss": best_trial.value,
+        #     "params": best_trial.params,
+        #     "best_model_path": best_weight_path
+        # }
 
-        model = MLP(*best_struct).to(device)
-        checkpoint = torch.load(best_weight_path, map_location=device)
-        model.load_state_dict(checkpoint["model"])
+        # with open(os.path.join(current_feat_path, "optuna_results.json"), "w", encoding="utf-8") as f:
+        #     json.dump(result, f, indent=4, ensure_ascii=False)
+
+        model = MLP_NORM(10, 128, 128, 128, 3).to(device)
+
+        op = torch.optim.Adam(model.parameters(), 1e-3, weight_decay=9.55638933553592e-09)
+        loss = nn.MSELoss()
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(op, factor=0.5, patience=10)
+
+        model_state_dict = {"model": None, "optimizer": None}
 
         loaders = {
-            "train": DataLoader(train_dataset, batch_size=512, shuffle=False),
+            "train": DataLoader(train_dataset, batch_size=128, shuffle=True),
             "val": DataLoader(val_dataset, batch_size=512, shuffle=False),
             "test": DataLoader(test_dataset, batch_size=512, shuffle=False)
         }
+
+        model.teaching(400, op, scheduler, loaders["train"], loaders["val"], root_path, 
+                       model_state_dict=model_state_dict, patience=25, loss_func=loss, verbose=True, lr=1e-3, batch_size=128)
+        
+        checkpoint = torch.load(best_weight_path, map_location=device)
+        model.load_state_dict(checkpoint["model"])
 
         for key, loader in loaders.items():
             res = model.evaluate(loader, name=key, save_path=current_feat_path, device=device)
