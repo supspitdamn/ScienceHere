@@ -12,11 +12,18 @@ import optuna
 import json
 
 def chunk_split(df: pd.DataFrame, strat: str, group_cols: list[str], target_cols: list[str], train_size: float, random_seed: int = 67):
+    """
+    Функция деления на обучающую, валидационную и тестовую выборки.
+    Задается процентаж обучающей выборки. Оставшаяся часть делится на пополам - валидация и тест
+    Деаю stratify по поверхностям, так как RNN должна обучиться по всем поверхностям в равной степени
+    """
     df = df.copy()
 
+    # Если были дубликаты колонок удаляем
     all_cols = list(set(group_cols + target_cols + [strat]))
     chunk_metadata = df[all_cols].drop_duplicates().reset_index(drop=True)
     
+    # делим тренировочная и вал + тест
     train_ids, temp_ids = train_test_split(
         chunk_metadata,
         train_size=train_size,
@@ -24,12 +31,15 @@ def chunk_split(df: pd.DataFrame, strat: str, group_cols: list[str], target_cols
         random_state=random_seed
     )
 
+    # Делим на вал и тест
     val_ids, test_ids = train_test_split(
         temp_ids,
         test_size=0.5,
         stratify=temp_ids[strat],        
         random_state=random_seed
     )
+
+    # Еще раз дропаем дубликаты
     unique_merge_cols = list(set(group_cols))
 
     train_ids_clean = train_ids[unique_merge_cols].drop_duplicates()
@@ -356,22 +366,27 @@ df_grouped = df.groupby(by = group_cols)
 # Пример группы
 print(df_grouped.get_group(("table", 0.1, 0)))
 
+# Внутри каждой группы выделяем сессии (от 0 до n сек)
 df["session_id"] = df_grouped["t"].transform(lambda x : (x.diff() < 0)).cumsum()
 
+# Размер чанка (подможество сессий)
 CHUNK_SIZE = 300
-
+# В каждой сессии чанки начинаются с 0 до m
 df["chunk_id"] = df.groupby("session_id").cumcount() // CHUNK_SIZE
 
+# Уникальный ключ чанка
 df["unique_chunk_key"] = df["session_id"].astype(str) + "_" + df["chunk_id"].astype(str)
 
 targets_cols = ['xpos', 'ypos', 'ang']
 df_processed = df.copy()
 
+# группируем по чанкам. Внутри каждой группы чанков выбираем первый элемент (таргеты) и центрируем относительно значения t = 0
 chunk_first = df_processed.groupby("unique_chunk_key", sort = False)[targets_cols].transform("first")
 df_processed[targets_cols] = df_processed[targets_cols] - chunk_first
 
 full_group_cols = group_cols + ["unique_chunk_key", "surf_copy"]
 
+# Функция деления по чанкам
 df_train, df_val, df_test = chunk_split(df = df_processed,
                                 strat = "surf_copy",
                                 group_cols = full_group_cols,
