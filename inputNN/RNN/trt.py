@@ -9,6 +9,38 @@ import pandas as pd
 from tqdm import tqdm
 import os
 import optuna
+import json
+
+def chunk_split(df: pd.DataFrame, strat: str, group_cols: list[str], target_cols: list[str], train_size: float, random_seed: int = 67):
+    df = df.copy()
+
+    all_cols = list(set(group_cols + target_cols + [strat]))
+    chunk_metadata = df[all_cols].drop_duplicates().reset_index(drop=True)
+    
+    train_ids, temp_ids = train_test_split(
+        chunk_metadata,
+        train_size=train_size,
+        stratify=chunk_metadata[strat],  
+        random_state=random_seed
+    )
+
+    val_ids, test_ids = train_test_split(
+        temp_ids,
+        test_size=0.5,
+        stratify=temp_ids[strat],        
+        random_state=random_seed
+    )
+    unique_merge_cols = list(set(group_cols))
+
+    train_ids_clean = train_ids[unique_merge_cols].drop_duplicates()
+    val_ids_clean = val_ids[unique_merge_cols].drop_duplicates()
+    test_ids_clean = test_ids[unique_merge_cols].drop_duplicates()
+
+    df_train = df.merge(train_ids_clean, on=unique_merge_cols, how='inner').reset_index(drop=True)
+    df_val = df.merge(val_ids_clean, on=unique_merge_cols, how='inner').reset_index(drop=True)
+    df_test = df.merge(test_ids_clean, on=unique_merge_cols, how='inner').reset_index(drop=True)
+
+    return df_train, df_val, df_test
 
 def objective(trial, current_features, targets_cols, df_train, df_val,  device, root_path):
 
@@ -92,28 +124,6 @@ class RobotDataset(Dataset):
         y = self.target[end_idx]
 
         return torch.tensor(x), torch.tensor(y)
-
-def train_val_test_split(df: pd.DataFrame, train_size, val_size):
-
-    train_frames = []
-    val_frames = []
-    test_frames = []
-
-    for _, group in df.groupby("movedir", sort=False):
-
-        n = len(group)
-        train_end_idx = int(n*train_size)
-        val_end_idx = train_end_idx + int(n*val_size)
-
-        train_frames.append(group.iloc[:train_end_idx])
-        val_frames.append(group.iloc[train_end_idx:val_end_idx])
-        test_frames.append(group.iloc[val_end_idx:])
-
-    df_train = pd.concat(train_frames).reset_index(drop = True)
-    df_val = pd.concat(val_frames).reset_index(drop = True)
-    df_test = pd.concat(test_frames).reset_index(drop = True)
-
-    return df_train, df_val, df_test
 
 class ROBLSTM(nn.Module):
 
@@ -297,6 +307,7 @@ class ROBLSTM(nn.Module):
         
         return summary_df
 
+# Подготовка данных
 df = pd.read_csv(r"C:\Users\User\OneDrive\Desktop\УИРС\SEM5\filtered_robot_data_csv.csv", encoding="cp1251", sep = ";")
 
 home_folder = r"C:\Users\User\Documents\MyPythonProjects\inputNN\RNN"
@@ -310,14 +321,88 @@ print(df.info())
 
 df.columns = [column.strip() for column in df.columns]
 
-plt.hist(df["movedir"], align = "mid", label = "Гистограмма распределения movedir")
-plt.xlabel("Значение movedir")
-plt.ylabel("Частота упоминаний")
-plt.title("Гистограмма распределения movedir")
+cols_to_convert = ["xcur", "ycur", "ang", "m1setvel", "m2setvel", "m3setvel", "m1pos", "m2pos", "m3pos"]
 
-df_grouped = df.sort_values(by = ["movedir", "t"])
+# Конвертация того, что не должно быть строкой
+for col in cols_to_convert:
+    if col in df.columns:
 
-df_train, df_val, df_test = train_val_test_split(df_grouped, 0.7, 0.2)
+        if df[col].dtype == 'object':
+            df[col] = df[col].astype(str).str.replace(',', '.')
+
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+# One Hot Encoding
+if 'surf' in df.columns and df['surf'].dtype == 'str':
+    df["surf_copy"] = df["surf"].copy()
+    df = pd.get_dummies(df, columns=['surf'], prefix='type', dtype=int)
+
+print(df.info())
+
+# Распределение speedamp
+plt.hist(df["speedamp"], align = "mid")
+plt.title("Distribution [speedamp]")
+plt.xlabel("value")
+plt.ylabel("freq")
+# plt.show()
+
+df = df.sort_index()
+
+group_cols = ["surf_copy", "speedamp", "movedir"]
+
+# Группируем эксперименты
+df_grouped = df.groupby(by = group_cols)
+
+# Пример группы
+print(df_grouped.get_group(("table", 0.1, 0)))
+
+df["session_id"] = df_grouped["t"].transform(lambda x : (x.diff() < 0)).cumsum()
+
+CHUNK_SIZE = 300
+
+df["chunk_id"] = df.groupby("session_id").cumcount() // CHUNK_SIZE
+
+df["unique_chunk_key"] = df["session_id"].astype(str) + "_" + df["chunk_id"].astype(str)
+
+targets_cols = ['xpos', 'ypos', 'ang']
+df_processed = df.copy()
+
+chunk_first = df_processed.groupby("unique_chunk_key", sort = False)[targets_cols].transform("first")
+df_processed[targets_cols] = df_processed[targets_cols] - chunk_first
+
+full_group_cols = group_cols + ["unique_chunk_key", "surf_copy"]
+
+df_train, df_val, df_test = chunk_split(df = df_processed,
+                                strat = "surf_copy",
+                                group_cols = full_group_cols,
+                                target_cols = targets_cols,
+                                train_size = 0.7)
+
+plt.figure(figsize=(10, 6))
+
+# Визуализация траекторий
+colors = ['red', 'green', 'blue']
+for i, (name, group) in enumerate(df_processed):
+
+    if i >= 3:
+        break
+        
+    x_centered = group["xpos"] - group["xpos"].iloc[0]
+    y_centered = group["ypos"] - group["ypos"].iloc[0]
+        
+    plt.plot(x_centered, y_centered, 
+             color=colors[i], 
+             alpha=0.7, 
+             linewidth=2, 
+             label=f"movedir: {name} (Centered)")
+
+plt.title("Центрированные траектории для первых 3 направлений")
+plt.xlabel("xpos offset")
+plt.ylabel("ypos offset")
+plt.grid(True)
+plt.legend()
+plt.show()
+
 
 deltas = ["vx", "vy", "omega"]
 speeds = ["m1vel", "m2vel", "m3vel"]
@@ -330,14 +415,12 @@ feature_expirements = {
     "Odometry_with_Slippage" : deltas + speeds + slips,
     "Odometry_with_Currents" : deltas + speeds + currents,
     "Full_motor_Physics" : deltas + speeds + slips + currents,
-    "Full_Context_wwith_Environments" : deltas + speeds + slips + currents + surfaces
+    "Full_Context_with_Environments" : deltas + speeds + slips + currents + surfaces
 }
-
-targets_cols = ["xcur", "ycur", "rotcur"]
 
 for exp_name, current_features in feature_expirements.items():
 
-    root_path = os.path.join(home_folder, f"{"-".join(current_features)}")
+    root_path = os.path.join(home_folder, exp_name)
 
     os.makedirs(root_path, exist_ok=True)
 
@@ -423,3 +506,18 @@ for exp_name, current_features in feature_expirements.items():
 
     print(f"\nИтоговая таблица метрик для {exp_name}:")
     print(summary_table.to_string())
+
+    best_config_meta = {
+        "experiment_name": exp_name,
+        "best_val_loss": study.best_value,
+        "input_features": current_features,
+        "target_columns": targets_cols,
+        "hyperparameters": best,
+    }
+
+    with open(
+        os.path.join(root_path, "best_model_params.json"),
+        "w",
+        encoding="utf-8",
+    ) as json_file:
+        json.dump(best_config_meta, json_file, ensure_ascii=False, indent=4)

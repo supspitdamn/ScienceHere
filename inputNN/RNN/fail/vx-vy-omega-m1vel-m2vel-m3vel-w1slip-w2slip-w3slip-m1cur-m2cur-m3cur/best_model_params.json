@@ -1,0 +1,31 @@
+{
+    "experiment_name": "Full_motor_Physics",
+    "best_val_loss": 0.023945639727682603,
+    "input_features": [
+        "vx",
+        "vy",
+        "omega",
+        "m1vel",
+        "m2vel",
+        "m3vel",
+        "w1slip",
+        "w2slip",
+        "w3slip",
+        "m1cur",
+        "m2cur",
+        "m3cur"
+    ],
+    "target_columns": [
+        "xcur",
+        "ycur",
+        "rotcur"
+    ],
+    "hyperparameters": {
+        "sequence_length": 20,
+        "hidden_dim": 256,
+        "num_layers": 3,
+        "dropout": 0.0,
+        "lr": 0.0017403751670302683,
+        "batch_size": 64
+    }
+}
