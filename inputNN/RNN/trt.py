@@ -3,6 +3,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, mean_squared_error, r2_score
 import pandas as pd
@@ -15,12 +16,12 @@ def chunk_split(df: pd.DataFrame, strat: str, group_cols: list[str], target_cols
     """
     Функция деления на обучающую, валидационную и тестовую выборки.
     Задается процентаж обучающей выборки. Оставшаяся часть делится на пополам - валидация и тест
-    Деаю stratify по поверхностям, так как RNN должна обучиться по всем поверхностям в равной степени
+    Даю stratify по поверхностям, так как RNN должна обучиться по всем поверхностям в равной степени
     """
     df = df.copy()
 
     # Если были дубликаты колонок удаляем
-    all_cols = list(set(group_cols + target_cols + [strat]))
+    all_cols = list(set(group_cols + [strat]))
     chunk_metadata = df[all_cols].drop_duplicates().reset_index(drop=True)
     
     # делим тренировочная и вал + тест
@@ -31,26 +32,13 @@ def chunk_split(df: pd.DataFrame, strat: str, group_cols: list[str], target_cols
         random_state=random_seed
     )
 
-    # Делим на вал и тест
-    val_ids, test_ids = train_test_split(
-        temp_ids,
-        test_size=0.5,
-        stratify=temp_ids[strat],        
-        random_state=random_seed
-    )
+    train_ids_clean = train_ids[all_cols].drop_duplicates()
+    temp_ids_clean = temp_ids[all_cols].drop_duplicates()
 
-    # Еще раз дропаем дубликаты
-    unique_merge_cols = list(set(group_cols))
+    df_train = df.merge(train_ids_clean, on=all_cols, how='inner').reset_index(drop=True)
+    df_temp = df.merge(temp_ids_clean, on=all_cols, how='inner').reset_index(drop=True)
 
-    train_ids_clean = train_ids[unique_merge_cols].drop_duplicates()
-    val_ids_clean = val_ids[unique_merge_cols].drop_duplicates()
-    test_ids_clean = test_ids[unique_merge_cols].drop_duplicates()
-
-    df_train = df.merge(train_ids_clean, on=unique_merge_cols, how='inner').reset_index(drop=True)
-    df_val = df.merge(val_ids_clean, on=unique_merge_cols, how='inner').reset_index(drop=True)
-    df_test = df.merge(test_ids_clean, on=unique_merge_cols, how='inner').reset_index(drop=True)
-
-    return df_train, df_val, df_test
+    return df_train, df_temp
 
 def objective(trial, current_features, targets_cols, df_train, df_val,  device, root_path):
 
@@ -59,13 +47,25 @@ def objective(trial, current_features, targets_cols, df_train, df_val,  device, 
     num_layers = trial.suggest_int("num_layers", 1, 3)
     dropout = trial.suggest_float("dropout", 0.0, 0.4, step=0.1)
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
-    batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+    batch_size = 32
 
     train_dataset = RobotDataset(df_train, sequence_length, current_features, targets_cols)
     val_dataset = RobotDataset(df_val, sequence_length, current_features, targets_cols)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, drop_last=True)
-    val_loader = DataLoader(val_dataset, batch_size=512, shuffle=False, pin_memory=True)
+    train_loader = DataLoader(train_dataset, 
+                              batch_size=batch_size, 
+                              shuffle=True, 
+                              pin_memory=True, 
+                              persistent_workers=True,
+                              num_workers = 4,
+                              drop_last=True)
+    
+    val_loader = DataLoader(val_dataset, 
+                            batch_size=512, 
+                            shuffle=False, 
+                            pin_memory=True,
+                            persistent_workers=True,
+                            num_workers = 4)
 
     model = ROBLSTM(
         input_dim=len(current_features),
@@ -74,6 +74,8 @@ def objective(trial, current_features, targets_cols, df_train, df_val,  device, 
         num_layers=num_layers,
         dropout=dropout
     )
+
+    model = torch.compile(model)
 
     model.to(device)
 
@@ -132,7 +134,6 @@ class RobotDataset(Dataset):
 
         x = self.features[start_idx:end_idx]
         y = self.target[end_idx]
-
         return torch.tensor(x), torch.tensor(y)
 
 class ROBLSTM(nn.Module):
@@ -188,6 +189,11 @@ class ROBLSTM(nn.Module):
 
             for x, y in tqdm_train_loader:
                 
+                # if epoch == 0:
+                    # print(f"Длина последовательности {len(x[0])}. Количество признаков {len(x[0, 0])}")
+                    # print(f"X : {x[0, 0, :]}")
+                    # print(f"Y : {y[0, :]}")
+
                 x, y = x.to(device), y.to(device)
                 op.zero_grad()
                 pred = self(x)
@@ -258,13 +264,14 @@ class ROBLSTM(nn.Module):
         plt.plot(range(epochs)[:len(train_loss_avg)], train_loss_avg, label = "Обучение")
         plt.xlabel("Эпохи")
         plt.ylabel("Лосс")
+        plt.tight_layout()
         plt.legend(loc = "best")
 
         plt.subplot(1, 2, 2)
         plt.title("Изменение шага обучения")
         plt.step(range(epochs)[:len(lr_change)], lr_change, label = "Шаг обучения")
         plt.xlabel("Эпохи")
-
+        plt.tight_layout()
         plt.savefig(os.path.join(root_path, "learning_info.png"), dpi = 300)
         plt.close()
 
@@ -294,6 +301,7 @@ class ROBLSTM(nn.Module):
                 mse = mean_squared_error(all_true, all_pred, multioutput="raw_values")
                 mae = mean_absolute_error(all_true, all_pred, multioutput="raw_values")
                 r2 = r2_score(all_true, all_pred, multioutput="raw_values")
+                mape = mean_absolute_percentage_error(all_true, all_pred, multioutput="raw_values")
                 
                 os.makedirs(save_path, exist_ok=True)
                 
@@ -304,235 +312,248 @@ class ROBLSTM(nn.Module):
                         log_txt.write(f"Абсолютная ошибка (Дельта Х, Дельта У, Дельта Фи): {'  '.join(map(str, np.round(mae, 4)))}\n")
                 
                 data_dict[loader_name] = {
-                    ("Дельта Х", "MSE"): mse[0], ("Дельта Х", "MAE"): mae[0], ("Дельта Х", "R2"): r2[0],
-                    ("Дельта У", "MSE"): mse[1], ("Дельта У", "MAE"): mae[1], ("Дельта У", "R2"): r2[1],
-                    ("Дельта Фи", "MSE"): mse[2], ("Дельта Фи", "MAE"): mae[2], ("Дельта Фи", "R2"): r2[2]
+                    ("Х", "MSE"): mse[0], ("Х", "MAE"): mae[0], ("Х", "R2"): r2[0],
+                    ("У", "MSE"): mse[1], ("У", "MAE"): mae[1], ("У", "R2"): r2[1],
+                    ("Фи", "MSE"): mse[2], ("Фи", "MAE"): mae[2], ("Фи", "R2"): r2[2]
                 }
 
         summary_df = pd.DataFrame.from_dict(data_dict, orient="index")
         summary_df.index.name = "Набор данных"
-        
-        # Сохраняем в CSV (мультииндекс запишется корректно в две верхние строчки)
+
         summary_df.to_csv(os.path.join(save_path, "FINAL_metrics_all.csv"), encoding="utf-8-sig")
         
         return summary_df
 
-# Подготовка данных
-df = pd.read_csv(r"C:\Users\User\OneDrive\Desktop\УИРС\SEM5\filtered_robot_data_csv.csv", encoding="cp1251", sep = ";")
+if __name__ == "__main__":
 
-home_folder = r"C:\Users\User\Documents\MyPythonProjects\inputNN\RNN"
+    # Подготовка данных
+    df = pd.read_csv(r"C:\Users\User\OneDrive\Desktop\УИРС\SEM5\filtered_robot_data_csv.csv", encoding="cp1251", sep = ";")
 
-os.makedirs(home_folder, exist_ok=True)
+    home_folder = r"C:\Users\User\Documents\MyPythonProjects\inputNN\RNN"
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Обучение на {device}")
+    os.makedirs(home_folder, exist_ok=True)
 
-print(df.info())
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Обучение на {device}")
 
-df.columns = [column.strip() for column in df.columns]
+    print(df.info())
 
-cols_to_convert = ["xcur", "ycur", "ang", "m1setvel", "m2setvel", "m3setvel", "m1pos", "m2pos", "m3pos"]
+    df.columns = [column.strip() for column in df.columns]
 
-# Конвертация того, что не должно быть строкой
-for col in cols_to_convert:
-    if col in df.columns:
+    cols_to_convert = ["xcur", "ycur", "ang", "m1setvel", "m2setvel", "m3setvel", "m1pos", "m2pos", "m3pos"]
 
-        if df[col].dtype == 'object':
-            df[col] = df[col].astype(str).str.replace(',', '.')
+    # Конвертация того, что не должно быть строкой
+    for col in cols_to_convert:
+        if col in df.columns:
 
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+            if df[col].dtype == 'object':
+                df[col] = df[col].astype(str).str.replace(',', '.')
 
-# One Hot Encoding
-if 'surf' in df.columns and df['surf'].dtype == 'str':
-    df["surf_copy"] = df["surf"].copy()
-    df = pd.get_dummies(df, columns=['surf'], prefix='type', dtype=int)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-print(df.info())
+    # One Hot Encoding
+    if 'surf' in df.columns and df['surf'].dtype == 'str':
+        df["surf_copy"] = df["surf"].copy()
+        df = pd.get_dummies(df, columns=['surf'], prefix='type', dtype=int)
 
-# Распределение speedamp
-plt.hist(df["speedamp"], align = "mid")
-plt.title("Distribution [speedamp]")
-plt.xlabel("value")
-plt.ylabel("freq")
-# plt.show()
+    print(df.info())
 
-df = df.sort_index()
+    # Распределение speedamp
+    plt.hist(df["speedamp"], align = "mid")
+    plt.title("Distribution [speedamp]")
+    plt.xlabel("value")
+    plt.ylabel("freq")
+    # plt.show()
 
-group_cols = ["surf_copy", "speedamp", "movedir"]
+    df = df.sort_index()
 
-# Группируем эксперименты
-df_grouped = df.groupby(by = group_cols)
+    group_cols = ["surf_copy", "speedamp", "movedir"]
 
-# Пример группы
-print(df_grouped.get_group(("table", 0.1, 0)))
+    # Группируем эксперименты
+    df_grouped = df.groupby(by = group_cols)
 
-# Внутри каждой группы выделяем сессии (от 0 до n сек)
-df["session_id"] = df_grouped["t"].transform(lambda x : (x.diff() < 0)).cumsum()
+    # Пример группы
+    print(df_grouped.get_group(("table", 0.1, 0)))
 
-# Размер чанка (подможество сессий)
-CHUNK_SIZE = 300
-# В каждой сессии чанки начинаются с 0 до m
-df["chunk_id"] = df.groupby("session_id").cumcount() // CHUNK_SIZE
+    # Внутри каждой группы выделяем сессии (от 0 до n сек)
+    df["session_id"] = df_grouped["t"].transform(lambda x : (x.diff() < 0)).cumsum()
 
-# Уникальный ключ чанка
-df["unique_chunk_key"] = df["session_id"].astype(str) + "_" + df["chunk_id"].astype(str)
+    # Размер чанка (подможество сессий)
+    CHUNK_SIZE = 300
+    # В каждой сессии чанки начинаются с 0 до m
+    df["chunk_id"] = df.groupby("session_id").cumcount() // CHUNK_SIZE
 
-targets_cols = ['xpos', 'ypos', 'ang']
-df_processed = df.copy()
+    # Уникальный ключ чанка
+    df["unique_chunk_key"] = df["session_id"].astype(str) + "_" + df["chunk_id"].astype(str)
 
-# группируем по чанкам. Внутри каждой группы чанков выбираем первый элемент (таргеты) и центрируем относительно значения t = 0
-chunk_first = df_processed.groupby("unique_chunk_key", sort = False)[targets_cols].transform("first")
-df_processed[targets_cols] = df_processed[targets_cols] - chunk_first
+    targets_cols = ['xpos', 'ypos', 'ang']
+    df_processed = df.copy()
 
-full_group_cols = group_cols + ["unique_chunk_key", "surf_copy"]
+    # группируем по чанкам. Внутри каждой группы чанков выбираем первый элемент (таргеты) и центрируем относительно значения t = 0
+    chunk_first = df_processed.groupby("unique_chunk_key", sort = False)[targets_cols].transform("first")
+    df_processed[targets_cols] = df_processed[targets_cols] - chunk_first
 
-# Функция деления по чанкам
-df_train, df_val, df_test = chunk_split(df = df_processed,
-                                strat = "surf_copy",
-                                group_cols = full_group_cols,
-                                target_cols = targets_cols,
-                                train_size = 0.7)
+    df_processed.to_csv(os.path.join(home_folder, "robot_data_with_chunks.csv"), encoding="utf-8-sig")
 
-plt.figure(figsize=(10, 6))
+    print(df_processed[["movedir", "speedamp", "t", "xpos", "ypos", "ang"]].head(15))
 
-# Визуализация траекторий
-colors = ['red', 'green', 'blue']
-for i, (name, group) in enumerate(df_processed):
+    full_group_cols = group_cols + ["unique_chunk_key", "surf_copy"]
 
-    if i >= 3:
-        break
-        
-    x_centered = group["xpos"] - group["xpos"].iloc[0]
-    y_centered = group["ypos"] - group["ypos"].iloc[0]
-        
-    plt.plot(x_centered, y_centered, 
-             color=colors[i], 
-             alpha=0.7, 
-             linewidth=2, 
-             label=f"movedir: {name} (Centered)")
+    # Функция деления по чанкам
+    df_train, df_temp = chunk_split(df = df_processed,
+                                    strat = "surf_copy",
+                                    group_cols = full_group_cols,
+                                    target_cols = targets_cols,
+                                    train_size = 0.7)
 
-plt.title("Центрированные траектории для первых 3 направлений")
-plt.xlabel("xpos offset")
-plt.ylabel("ypos offset")
-plt.grid(True)
-plt.legend()
-plt.show()
+    df_val, df_test = chunk_split(df = df_temp,
+                                    strat = "surf_copy",
+                                    group_cols = full_group_cols,
+                                    target_cols = targets_cols,
+                                    train_size = 0.5)
 
+    plt.figure(figsize=(10, 6))
 
-deltas = ["vx", "vy", "omega"]
-speeds = ["m1vel", "m2vel", "m3vel"]
-slips = ["w1slip", "w2slip", "w3slip"]
-currents = ["m1cur", "m2cur", "m3cur"]
-surfaces = ["type_brown", "type_gray", "type_green", "type_table"]
+    deltas = ["vx", "vy", "omega"]
+    speeds = ["m1vel", "m2vel", "m3vel"]
+    slips = ["w1slip", "w2slip", "w3slip"]
+    currents = ["m1cur", "m2cur", "m3cur"]
+    surfaces = ["type_brown", "type_gray", "type_green", "type_table"]
 
-feature_expirements = {
-    "Base_Odometry" : deltas + speeds,
-    "Odometry_with_Slippage" : deltas + speeds + slips,
-    "Odometry_with_Currents" : deltas + speeds + currents,
-    "Full_motor_Physics" : deltas + speeds + slips + currents,
-    "Full_Context_with_Environments" : deltas + speeds + slips + currents + surfaces
-}
+    all_features = deltas + speeds + slips + currents + surfaces
 
-for exp_name, current_features in feature_expirements.items():
+    SC_X = StandardScaler()
 
-    root_path = os.path.join(home_folder, exp_name)
+    df_train_scaled = df_train.copy()
+    df_val_scaled = df_val.copy()
+    df_test_scaled = df_test.copy()
 
-    os.makedirs(root_path, exist_ok=True)
+    df_train_scaled[all_features] = SC_X.fit_transform(df_train[all_features])
+    df_val_scaled[all_features] = SC_X.transform(df_val[all_features])
+    df_test_scaled[all_features] = SC_X.transform(df_test[all_features])
 
-    study = optuna.create_study(direction="minimize")
-
-    study.optimize(
-        lambda trial: objective(
-            trial, current_features, targets_cols, df_train, df_val, device, root_path
-        ),
-        n_trials=20,
-    )
-
-    print("\n" + "=" * 50)
-    print(f"ПОДБОР ЗАВЕРШЕН ДЛЯ ЭКСПЕРИМЕНТА: {exp_name}")
-    print(f"Лучший достигнутый Val Loss: {study.best_value:.6f}")
-    print("Лучшие параметры архитектуры:")
-    for key, value in study.best_params.items():
-        print(f"  {key}: {value}")
-    print("=" * 50)
-
-    best = study.best_params
-
-    final_train_dataset = RobotDataset(
-        df_train, best["sequence_length"], current_features, targets_cols
-    )
-    final_val_dataset = RobotDataset(
-        df_val, best["sequence_length"], current_features, targets_cols
-    )
-    final_test_dataset = RobotDataset(
-        df_test, best["sequence_length"], current_features, targets_cols
-    )
-
-    final_train_loader = DataLoader(
-        final_train_dataset,
-        batch_size=best["batch_size"],
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
-    final_val_loader = DataLoader(
-        final_val_dataset, batch_size=512, shuffle=False, pin_memory=True
-    )
-    final_test_loader = DataLoader(
-        final_test_dataset, batch_size=512, shuffle=False, pin_memory=True
-    )
-
-    final_model = ROBLSTM(
-        input_dim=len(current_features),
-        hidden_dim=best["hidden_dim"],
-        output_dim=len(targets_cols),
-        num_layers=best["num_layers"],
-        dropout=best["dropout"],
-    )
-    final_model.to(device)
-
-    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=best["lr"])
-    final_criterion = nn.MSELoss()
-    final_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        final_optimizer, mode="min", factor=0.5, patience=4
-    )
-
-    final_model.fit(
-        op=final_optimizer,
-        criterion=final_criterion,
-        scheduler=final_scheduler,
-        train_loader=final_train_loader,
-        val_loader=final_val_loader,
-        epochs=40,
-        root_path=root_path,
-        device=device,
-        patience=10,
-    )
-
-    loaders_dict = {
-        "train": final_train_loader,
-        "val": final_val_loader,
-        "test": final_test_loader,
+    feature_expirements = {
+        "Base_Odometry" : deltas + speeds,
+        "Odometry_with_Slippage" : deltas + speeds + slips,
+        "Odometry_with_Currents" : deltas + speeds + currents,
+        "Full_motor_Physics" : deltas + speeds + slips + currents,
+        "Full_Context_with_Environments" : deltas + speeds + slips + currents + surfaces
     }
 
-    summary_table = final_model.evaluate_all(
-        loaders=loaders_dict, save_path=root_path, device=device
-    )
+    for exp_name, current_features in feature_expirements.items():
 
-    print(f"\nИтоговая таблица метрик для {exp_name}:")
-    print(summary_table.to_string())
+        root_path = os.path.join(home_folder, exp_name)
 
-    best_config_meta = {
-        "experiment_name": exp_name,
-        "best_val_loss": study.best_value,
-        "input_features": current_features,
-        "target_columns": targets_cols,
-        "hyperparameters": best,
-    }
+        os.makedirs(root_path, exist_ok=True)
 
-    with open(
-        os.path.join(root_path, "best_model_params.json"),
-        "w",
-        encoding="utf-8",
-    ) as json_file:
-        json.dump(best_config_meta, json_file, ensure_ascii=False, indent=4)
+        study = optuna.create_study(direction="minimize")
+
+        study.optimize(
+            lambda trial: objective(
+                trial, current_features, targets_cols, df_train_scaled, df_val_scaled, device, root_path
+            ),
+            n_trials=10,
+        )
+
+        print("\n" + "=" * 50)
+        print(f"ПОДБОР ЗАВЕРШЕН ДЛЯ ЭКСПЕРИМЕНТА: {exp_name}")
+        print(f"Лучший достигнутый Val Loss: {study.best_value:.6f}")
+        print("Лучшие параметры архитектуры:")
+        for key, value in study.best_params.items():
+            print(f"  {key}: {value}")
+        print("=" * 50)
+
+        best = study.best_params
+
+        final_train_dataset = RobotDataset(
+            df_train_scaled, best["sequence_length"], current_features, targets_cols
+        )
+        final_val_dataset = RobotDataset(
+            df_val_scaled, best["sequence_length"], current_features, targets_cols
+        )
+        final_test_dataset = RobotDataset(
+            df_test_scaled, best["sequence_length"], current_features, targets_cols
+        )
+
+        final_train_loader = DataLoader(
+            final_train_dataset,
+            batch_size=32,
+            shuffle=True,
+            pin_memory=True,
+            persistent_workers=True,
+            num_workers = 4,
+            drop_last=True
+        )
+        final_val_loader = DataLoader(
+            final_val_dataset,
+              batch_size=512,
+                shuffle=False,
+                persistent_workers=True,
+                num_workers = 4,
+                pin_memory=True
+        )
+        final_test_loader = DataLoader(
+            final_test_dataset,
+            batch_size=512,
+            shuffle=False, 
+            persistent_workers=True,
+            num_workers = 4,
+            pin_memory=True
+        )
+
+        final_model = ROBLSTM(
+            input_dim=len(current_features),
+            hidden_dim=best["hidden_dim"],
+            output_dim=len(targets_cols),
+            num_layers=best["num_layers"],
+            dropout=best["dropout"],
+        )
+        final_model.to(device)
+
+        final_model = torch.compile(final_model)
+
+        final_optimizer = torch.optim.Adam(final_model.parameters(), lr=best["lr"])
+        final_criterion = nn.MSELoss()
+        final_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            final_optimizer, mode="min", factor=0.5, patience=4
+        )
+
+        final_model.fit(
+            op=final_optimizer,
+            criterion=final_criterion,
+            scheduler=final_scheduler,
+            train_loader=final_train_loader,
+            val_loader=final_val_loader,
+            epochs=100,
+            root_path=root_path,
+            device=device,
+            patience=10,
+        )
+
+        loaders_dict = {
+            "train": final_train_loader,
+            "val": final_val_loader,
+            "test": final_test_loader,
+        }
+
+        summary_table = final_model.evaluate_all(
+            loaders=loaders_dict, save_path=root_path, device=device
+        )
+
+        print(f"\nИтоговая таблица метрик для {exp_name}:")
+        print(summary_table.to_string())
+
+        best_config_meta = {
+            "experiment_name": exp_name,
+            "best_val_loss": study.best_value,
+            "input_features": current_features,
+            "target_columns": targets_cols,
+            "hyperparameters": best,
+        }
+
+        with open(
+            os.path.join(root_path, "best_model_params.json"),
+            "w",
+            encoding="utf-8",
+        ) as json_file:
+            json.dump(best_config_meta, json_file, ensure_ascii=False, indent=4)
