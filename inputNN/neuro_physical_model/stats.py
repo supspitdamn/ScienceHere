@@ -1,43 +1,47 @@
-import matplotlib.pyplot as plt
-import pandas as pd
 import os
+import sys
+import numpy as np
+import pandas as pd
 import torch
+import matplotlib.pyplot as plt
 
 root_path = r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_comparison"
 df_info = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
-df_info[["m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur", "w1slip", "w2slip", "w3slip", "vx", "vy", "omega"][::-1]].describe().to_csv("features_stats.csv", sep=";")
+df_info.columns = [col.strip() for col in df_info.columns]
 
-separated_lst = ["Простые без остаточных связей по отдельности", 0.0017966036,0.0018164061,0.0038148174  ,0.07165958,0.064241745,0.07403059  ,0.055032067,0.056803983,0.053757574,  0.53941023,0.53941023,0.53941023, 0]
 df = pd.read_excel(os.path.join(root_path, "FINAL_NPM_metrics_test.xlsx"))
-df.iloc[-1] = separated_lst
-
-print(df_info[["vx", "vy", "omega", "w1slip", "w2slip", "w3slip", "m1vel", "m2vel", "m3vel", "m1cur", "m2cur", "m3cur"]])
-print(df)
 
 models = df.iloc[:, 0].to_list()
-print(models)
-
 columns = list(df.columns[1:-1])
 
-mean_value = torch.tensor(df_info[["vx", "vy", "omega", "w1slip", "w2slip", "w3slip", "m1cur", "m2cur", "m3cur", "m1vel", "m2vel", "m3vel"]].values).abs().mean(dim=0)
+ordered_features_for_mean = [
+    "xpos", "ypos", "ang",
+    "vx", "vy", "omega",
+    "w1slip", "w2slip", "w3slip",
+    "m1cur", "m2cur", "m3cur",
+    "m1vel", "m2vel", "m3vel"
+]
 
-print(mean_value)
-print(columns)
+for col in ordered_features_for_mean:
+    if col in df_info.columns:
+        if df_info[col].dtype == 'object':
+            df_info[col] = df_info[col].astype(str).str.replace(',', '.')
+        df_info[col] = pd.to_numeric(df_info[col], errors='coerce').fillna(0.0)
 
-plt.figure(figsize=(14, 7))
+mean_value = torch.tensor(df_info[ordered_features_for_mean].values.astype(np.float32)).abs().mean(dim=0)
+
+plt.figure(figsize=(15, 8))
 for i in range(df.shape[0]):
-
     row_values = df[columns].iloc[i].values
-    y_values = [row_values[idx] / abs(mean_value[idx].item()) for idx in range(len(columns))]
+    y_values = [row_values[idx] / (abs(mean_value[idx].item()) + 1e-8) for idx in range(len(columns))]
     
     line, = plt.plot(columns, y_values, marker='o', linewidth=2, label=models[i])
     line_color = line.get_color()
 
     for idx, col in enumerate(columns):
         val = y_values[idx]
-
-        base_step = 0.005
+        base_step = 0.02
 
         if i % 2 == 0:
             direction_multiplier = 1 + (i // 2)
@@ -59,47 +63,36 @@ for i in range(df.shape[0]):
             color=line_color        
         )
 
-plt.gca().invert_xaxis()
 plt.legend(loc="best")
 plt.grid(True, linestyle='--', alpha=0.7)
-plt.xlabel("Стадии обучения")
-plt.ylabel("Значения MAE")
-plt.title("Динамика изменения MAE по стадиям обучения")
+plt.xlabel("Параметры стадий обучения")
+plt.ylabel("Относительное значение MAE (MAE / Mean_Abs_Value)")
+plt.title("Динамика изменения относительного MAE по стадиям обучения моделей")
 plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
 plt.show()
 
 
-import matplotlib.pyplot as plt
-import pandas as pd
-import os
+categories = ['X', 'Y', 'Фи', 'Дельта', 'Проскальзывание', 'Ток', 'Скорость']
 
-root_path = r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_comparison"
-df = pd.read_excel(os.path.join(root_path, "FINAL_NPM_metrics_test.xlsx"))
+plt.figure(figsize=(11, 6))
 
-models = df.iloc[:-1, 0].to_list()
-print(models)
-
-categories = ['Дельта', 'Проскальзывание', 'Скорость', 'Ток']
-
-plt.figure(figsize=(10, 6))
-
-for i in range(df.shape[0] - 1):
+for i in range(df.shape[0]):
     row = df.iloc[i]
     y_values = []
     
     for cat in categories:
-        cat_cols = [col for col in df.columns if col.startswith(cat)]
+        cat_cols = [col for col in columns if col.startswith(cat)]
         mean_val = row[cat_cols].mean()
         y_values.append(mean_val)
         
     plt.plot(categories, y_values, marker='o', linewidth=2, label=models[i])
 
-plt.gca().invert_xaxis()
 plt.legend(loc="best")
 plt.grid(True, linestyle='--', alpha=0.7)
-plt.xlabel("Группы параметров")
-plt.ylabel("Среднее значение MAE")
-plt.title("Динамика изменения усредненного MAE по группам параметров")
+plt.xlabel("Группы физических параметров")
+plt.ylabel("Среднее абсолютное значение MAE")
+plt.title("Динамика изменения усредненного абсолютного MAE по стадиям моделирования")
 plt.tight_layout()
 plt.show()
+
