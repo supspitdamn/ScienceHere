@@ -1,0 +1,25 @@
+{
+    "experiment_name": "Odometry_with_Slippage",
+    "best_val_loss": 0.06976178511625754,
+    "input_features": [
+        "vx",
+        "vy",
+        "omega",
+        "m1vel",
+        "m2vel",
+        "m3vel",
+        "w1slip",
+        "w2slip",
+        "w3slip"
+    ],
+    "target_columns": [
+        "ypos"
+    ],
+    "hyperparameters": {
+        "sequence_length": 30,
+        "hidden_dim": 256,
+        "num_layers": 1,
+        "dropout": 0.0,
+        "lr": 0.0006033863833853507
+    }
+}

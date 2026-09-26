@@ -1,0 +1,22 @@
+{
+    "experiment_name": "Base_Odometry",
+    "best_val_loss": 0.0680822015406107,
+    "input_features": [
+        "vx",
+        "vy",
+        "omega",
+        "m1vel",
+        "m2vel",
+        "m3vel"
+    ],
+    "target_columns": [
+        "ypos"
+    ],
+    "hyperparameters": {
+        "sequence_length": 30,
+        "hidden_dim": 64,
+        "num_layers": 2,
+        "dropout": 0.4,
+        "lr": 0.0010498543506401682
+    }
+}

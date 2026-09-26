@@ -26,40 +26,7 @@ from RNN.trt import RobotDataset, chunk_split, ROBLSTM
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Обучение на {device}")
 
-df = pd.read_csv(r"C:\Users\User\OneDrive\Desktop\УИРС\SEM5\filtered_robot_data_csv.csv", encoding="cp1251", sep = ";")
-
-print(df.info())
-
-df.columns = [column.strip() for column in df.columns]
-
-cols_to_convert = ["xcur", "ycur", "ang", "m1setvel", "m2setvel", "m3setvel", "m1pos", "m2pos", "m3pos"]
-
-for col in cols_to_convert:
-    if col in df.columns:
-        if df[col].dtype == 'object':
-            df[col] = df[col].astype(str).str.replace(',', '.')
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-
-df = df.query("w1slip <= 1 and w2slip <= 1 and w3slip <= 1")
-
-for col in ["m1setvel", "m2setvel", "m3setvel"]:
-    df[col] = pd.to_numeric(df[col], errors="coerce")
-df = df.dropna(subset=["m1setvel", "m2setvel", "m3setvel"])
-
-cols_to_keep = [
-    "m1setvel", "m2setvel", "m3setvel", 
-    "m1cur", "m2cur", "m3cur", 
-    "surf", "t", "speedamp", "movedir",
-    "m1vel", "m2vel", "m3vel", 
-    "w1slip", "w2slip", "w3slip", 
-    "vx", "vy", "omega", 
-    "xpos", "ypos", "ang"
-]
-df = df[cols_to_keep]
-
-if 'surf' in df.columns:
-    df["surf_copy"] = df["surf"].copy()
-    df = pd.get_dummies(df, columns=['surf'], prefix='type', dtype=int)
+df = pd.read_csv(r"RNN\Phi\robot_data_with_chunks.csv")
 
 df = df.sort_index()
 group_cols = ["surf_copy", "speedamp", "movedir"]
@@ -71,7 +38,7 @@ CHUNK_SIZE = 300
 df["chunk_id"] = df.groupby("session_id").cumcount() // CHUNK_SIZE
 df["unique_chunk_key"] = df["session_id"].astype(str) + "_" + df["chunk_id"].astype(str)
 
-full_group_cols = group_cols + ["unique_chunk_key", "surf_copy"]
+full_group_cols = group_cols + ["unique_chunk_key"]
 
 columns_to_standartize = [
     "vx", "vy", "omega",         # delta_st4
@@ -83,9 +50,23 @@ columns_to_standartize = [
 features = [
     "m1setvel", "m2setvel", "m3setvel",
     "type_brown", "type_gray", "type_green", "type_table",
+    "xpos", "ypos", "sin(ang)", "cos(ang)"
 ]
 
-targets_all = ["xpos", "ypos", "ang"] + columns_to_standartize
+targets_all = ["xpos", "ypos", "sin(ang)", "cos(ang)"] + columns_to_standartize
+
+unique_sessions = df["session_id"].unique()
+
+print("Выберите сессию:")
+for session in unique_sessions:
+
+    print(f"Сессия #{session}")
+
+session = int(input("Введите номер сессии: "))
+
+df = df[df["session_id"] == session]
+
+session_time = df["t"].tolist()
 
 train, temp = chunk_split(
     df=df,
@@ -108,19 +89,19 @@ SC_X.fit(train[columns_to_standartize])
 
 train_dataset = RobotDataset(
     grouped_df=train, 
-    sequence_length=25, 
+    sequence_length=20, 
     feature_cols=features, 
     target_cols=targets_all
 )
 val_dataset = RobotDataset(
     grouped_df=val, 
-    sequence_length=25, 
+    sequence_length=20, 
     feature_cols=features, 
     target_cols=targets_all
 )
 test_dataset = RobotDataset(
     grouped_df=test, 
-    sequence_length=25, 
+    sequence_length=20, 
     feature_cols=features, 
     target_cols=targets_all
 )
@@ -833,7 +814,7 @@ class MLP(nn.Module):
 
 class NPM(nn.Module):
 
-    def __init__(self, scaler: StandardScaler, seq_neur: list, device: str = "cuda", kaiman_weight_init = False) -> None:
+    def __init__(self, scaler, seq_neur: list, device: str = "cuda", kaiman_weight_init = False) -> None:
         super().__init__()
         
         self.scaler = scaler
@@ -842,6 +823,12 @@ class NPM(nn.Module):
         self.stage_3 = seq_neur[2]                # Сеть для проскальзываний
         self.stage_4 = seq_neur[3]                # Сеть для дельта-координат
         self.stage_5 = nn.ModuleList(seq_neur[4]) # Список из 3 ROBLSTM (X, Y, Phi)
+
+        # Переносим параметры скалера в буферы модели
+        mean_t = torch.tensor(scaler.mean_, dtype=torch.float32)
+        std_t = torch.tensor(scaler.var_, dtype=torch.float32).sqrt()
+        self.register_buffer("mean_tensor", mean_t.unsqueeze(0))
+        self.register_buffer("std_tensor", std_t.unsqueeze(0))
 
         if kaiman_weight_init:
             self.apply(self._init_kaiming)
@@ -856,15 +843,16 @@ class NPM(nn.Module):
     
     def forward(self, vec: torch.Tensor):
 
-        device = next(self.parameters()).device
+        device = self.mean_tensor.device
         vec = vec.to(device).float()
         
         batch_size, seq_len, num_features = vec.shape
-
         surfs_3d = vec[:, :, 3:7]
+        coords_3d = vec[:, :, 7:11] # Извлекаем исторические координаты xpos, ypos, sin(ang), cos(ang)
 
         vec_flat = vec.reshape(batch_size * seq_len, num_features)
         surfs_flat = surfs_3d.reshape(batch_size * seq_len, 4)
+        coords_flat = coords_3d.reshape(batch_size * seq_len, 4)
 
         # Стадия 1
         v1_s = self.stage_1[0](torch.cat((vec_flat[:, 0:1], surfs_flat), dim=1))
@@ -888,17 +876,15 @@ class NPM(nn.Module):
         dynamic_features = torch.cat((delta_st4, v_st1, slip_st3, cur_st2), dim=1) 
 
         # Стандартизация параметров через константы StandardScaler
-        mean_tensor = torch.tensor(self.scaler.mean_, dtype=torch.float32, device=device).unsqueeze(0)
-        std_tensor = torch.tensor(self.scaler.var_, dtype=torch.float32, device=device).sqrt().unsqueeze(0)
-        dynamic_features_scaled = (dynamic_features - mean_tensor) / (std_tensor + 1e-8)
+        dynamic_features_scaled = (dynamic_features - self.mean_tensor) / (self.std_tensor + 1e-8)
 
-        in_st5_flat = torch.cat((dynamic_features_scaled, surfs_flat), dim=1) # [Batch*25, 16]
+        in_st5_flat = torch.cat((dynamic_features_scaled, surfs_flat, coords_flat), dim=1) # [Batch*25, 20]
 
-        in_st5_lstm = in_st5_flat.reshape(batch_size, seq_len, 16) # [Batch, 25, 16]
+        in_st5_lstm = in_st5_flat.reshape(batch_size, seq_len, 20) # [Batch, 25, 20]
 
-        in_x   = in_st5_lstm[:, -5:, :]   # Последние 5 шагов для модели X -> [Batch, 5, 16]
-        in_y   = in_st5_lstm[:, -20:, :]  # Последние 20 шагов для модели Y -> [Batch, 20, 16]
-        in_phi = in_st5_lstm[:, -25:, :]  # Все 25 шагов для модели Phi -> [Batch, 25, 16]
+        in_x   = in_st5_lstm[:, -15:, :]
+        in_y   = in_st5_lstm[:, -10:, :] 
+        in_phi = in_st5_lstm[:, -20:, :]
 
         x_st5   = self.stage_5[0](in_x)     
         y_st5   = self.stage_5[1](in_y)     
@@ -921,65 +907,75 @@ class NPM(nn.Module):
 
                 coords_st5, delta_st4, slip_st3, cur_st2, v_st1 = self(x) 
 
-                # возвращаем им 3D структуру [Batch, 25, 3]
-                delta_3d = delta_st4.reshape(batch_size, 25, 3)
-                slip_3d = slip_st3.reshape(batch_size, 25, 3)
-                vel_3d = v_st1.reshape(batch_size, 25, 3)
-                cur_3d = cur_st2.reshape(batch_size, 25, 3)
+                delta_3d = delta_st4.reshape(batch_size, -1, 3)
+                slip_3d = slip_st3.reshape(batch_size, -1, 3)
+                vel_3d = v_st1.reshape(batch_size, -1, 3)
+                cur_3d = cur_st2.reshape(batch_size, -1, 3)
 
-                # чтобы сопоставить с y из RobotDataset (форма [Batch, 3])
                 delta_last = delta_3d[:, -1, :]
                 slip_last = slip_3d[:, -1, :]
                 vel_last = vel_3d[:, -1, :]
                 cur_last = cur_3d[:, -1, :]
 
-                # Порядок: Coords (3) -> Delta (3) -> Vel (3) -> Slip (3) -> Cur (3)
-                predict_tensor = torch.cat([coords_st5, delta_last, vel_last, slip_last, cur_last], dim=1)
-                predict = predict_tensor.cpu().numpy()
-
-                # y[:, 0:3] -> xpos, ypos, ang
-                # y[:, 3:6] -> vx, vy, omega (delta)
-                # y[:, 6:9] -> m1vel, m2vel, m3vel (vel)
-                # y[:, 9:12] -> w1slip, w2slip, w3slip (slip)
-                # y[:, 12:15] -> m1cur, m2cur, m3cur (cur)
-                true_value = y.cpu().numpy()
+                y_last = y[:, -1, :] if y.dim() == 3 else y
+                true_value = y_last.cpu().numpy()
+                
                 true_ordered = np.hstack([
-                    true_value[:, 0:3],   # Coords
-                    true_value[:, 3:6],   # Delta
-                    true_value[:, 6:9],   # Vel
-                    true_value[:, 9:12],  # Slip
-                    true_value[:, 12:15]  # Cur
+                    true_value[:, 0:4],    
+                    true_value[:, 4:7],    
+                    true_value[:, 10:13],  
+                    true_value[:, 13:16],  
+                    true_value[:, 7:10]    
+                ])
+
+                predict_ordered = np.hstack([
+                    coords_st5.cpu().numpy(), 
+                    delta_last.cpu().numpy(), 
+                    slip_last.cpu().numpy(),   
+                    cur_last.cpu().numpy(),    
+                    vel_last.cpu().numpy()     
                 ])
 
                 all_true.append(true_ordered)
-                all_pred.append(predict)
+                all_pred.append(predict_ordered)
 
         all_pred = np.vstack(all_pred)
         all_true = np.vstack(all_true)
 
-        # Считаем метрики по всем 15 колонкам
         mse = mean_squared_error(all_true, all_pred, multioutput="raw_values")
         mae = mean_absolute_error(all_true, all_pred, multioutput="raw_values")
         r2 = r2_score(all_true, all_pred, multioutput="raw_values")
 
-        # Запись результатов в лог-файл 
+        r2_coords = np.mean(r2[0:4])
+        r2_delta = np.mean(r2[4:7])
+        r2_slip = np.mean(r2[7:10])
+        r2_cur = np.mean(r2[10:13])
+        r2_vel = np.mean(r2[13:16])
+
         with open(os.path.join(save_path, "LOG.txt"), "a", encoding="utf-8-sig") as log_txt:
             if name == "test":
                 log_txt.write(20*"-"+"\n")
                 log_txt.write("Результаты для тестовой выборки:\n")
                 
-                # Добавлено логирование финального качества координат робота
-                log_txt.write(f"MAE Coords (X, Y, Ang):  {'  '.join(map(str, np.round(mae[0:3], 4)))}\n")
-                log_txt.write(f"MAE Delta (X, Y, Phi):   {'  '.join(map(str, np.round(mae[3:6], 4)))}\n")
-                log_txt.write(f"MAE Скор. (V1, V2, V3):   {'  '.join(map(str, np.round(mae[6:9], 4)))}\n")
-                log_txt.write(f"MAE Slip (S1, S2, S3):    {'  '.join(map(str, np.round(mae[9:12], 4)))}\n")
-                log_txt.write(f"MAE Токи (M1, M2, M3):    {'  '.join(map(str, np.round(mae[12:15], 4)))}\n")
+                log_txt.write(f"MAE Coords (X, Y, Sin, Cos): {'  '.join(map(str, np.round(mae[0:4], 4)))}\n")
+                log_txt.write(f"MAE Delta (X, Y, Phi):       {'  '.join(map(str, np.round(mae[4:7], 4)))}\n")
+                log_txt.write(f"MAE Slip (S1, S2, S3):       {'  '.join(map(str, np.round(mae[7:10], 4)))}\n")
+                log_txt.write(f"MAE Токи (M1, M2, M3):       {'  '.join(map(str, np.round(mae[10:13], 4)))}\n")
+                log_txt.write(f"MAE Скор. (V1, V2, V3):      {'  '.join(map(str, np.round(mae[13:16], 4)))}\n")
+                
+                log_txt.write("\nМакроусредненный R2 по блокам:\n")
+                log_txt.write(f"R2 Coords:  {r2_coords:.4f}\n")
+                log_txt.write(f"R2 Delta:   {r2_delta:.4f}\n")
+                log_txt.write(f"R2 Slip:    {r2_slip:.4f}\n")
+                log_txt.write(f"R2 Currents:{r2_cur:.4f}\n")
+                log_txt.write(f"R2 Velocity:{r2_vel:.4f}\n")
 
         return {
             "MSE": tuple(mse), 
             "MAE": tuple(mae), 
             "R2": tuple(r2)
         }
+
 
 
     def fit(self, optimizer, loss, scheduler, train_loader, val_loader, epochs, root_path, patience = 10):
@@ -991,7 +987,6 @@ class NPM(nn.Module):
         counter = 0
         best_model_path = os.path.join(root_path, "best_model.pth")
         
-        # Определяем глобальный device внутри метода
         device = next(self.parameters()).device
         with open(os.path.join(root_path, "LOG.txt"), "a", encoding = "utf-8") as log_txt:
 
@@ -1002,7 +997,6 @@ class NPM(nn.Module):
                 self.train()
 
                 train_tqdm = tqdm(train_loader, desc=f"Эпоха {idx+1}/{epochs} [Обучение]")
-                val_tqdm = tqdm(val_loader, desc=f"Эпоха {idx+1}/{epochs} [Валидация]")
 
                 for x, y in train_tqdm:
 
@@ -1012,21 +1006,18 @@ class NPM(nn.Module):
 
                     coords_st5, delta_st4, slip_st3, cur_st2, v_st1 = self(x)
 
-                    pred_delta_last = delta_st4.reshape(batch_size, 25, 3)[:, -1, :]
-                    pred_slip_last  = slip_st3.reshape(batch_size, 25, 3)[:, -1, :]
-                    pred_vel_last   = v_st1.reshape(batch_size, 25, 3)[:, -1, :]
-                    pred_cur_last   = cur_st2.reshape(batch_size, 25, 3)[:, -1, :]
+                    pred_delta_last = delta_st4.reshape(batch_size, -1, 3)[:, -1, :]
+                    pred_slip_last  = slip_st3.reshape(batch_size, -1, 3)[:, -1, :]
+                    pred_vel_last   = v_st1.reshape(batch_size, -1, 3)[:, -1, :]
+                    pred_cur_last   = cur_st2.reshape(batch_size, -1, 3)[:, -1, :]
 
-                    # y[:, 0:3]   -> xpos, ypos, ang (Coords)
-                    # y[:, 3:6]   -> vx, vy, omega (Delta)
-                    # y[:, 6:9]   -> m1vel, m2vel, m3vel (Velocity)
-                    # y[:, 9:12]  -> w1slip, w2slip, w3slip (Slip)
-                    # y[:, 12:15] -> m1cur, m2cur, m3cur (Currents)
-                    loss_coords = loss(coords_st5, y[:, 0:3])
-                    loss_delta  = loss(pred_delta_last, y[:, 3:6])
-                    loss_vel    = loss(pred_vel_last, y[:, 6:9])
-                    loss_slip   = loss(pred_slip_last, y[:, 9:12])
-                    loss_cur    = loss(pred_cur_last, y[:, 12:15])
+                    y_last = y[:, -1, :] if y.dim() == 3 else y
+
+                    loss_coords = loss(coords_st5, y_last[:, 0:4])
+                    loss_delta  = loss(pred_delta_last, y_last[:, 4:7])
+                    loss_vel    = loss(pred_vel_last, y_last[:, 7:10])
+                    loss_slip   = loss(pred_slip_last, y_last[:, 10:13])
+                    loss_cur    = loss(pred_cur_last, y_last[:, 13:16])
 
                     summary_loss = loss_coords + loss_delta + loss_vel + loss_slip + loss_cur
 
@@ -1043,6 +1034,8 @@ class NPM(nn.Module):
                 
                 self.eval()
 
+                val_tqdm = tqdm(val_loader, desc=f"Эпоха {idx+1}/{epochs} [Валидация]")
+
                 for x, y in val_tqdm:
                     x, y = x.to(device), y.to(device)
                     batch_size = x.shape[0]
@@ -1051,16 +1044,18 @@ class NPM(nn.Module):
 
                         coords_st5, delta_st4, slip_st3, cur_st2, v_st1 = self(x)
 
-                        pred_delta_last = delta_st4.reshape(batch_size, 25, 3)[:, -1, :]
-                        pred_slip_last  = slip_st3.reshape(batch_size, 25, 3)[:, -1, :]
-                        pred_vel_last   = v_st1.reshape(batch_size, 25, 3)[:, -1, :]
-                        pred_cur_last   = cur_st2.reshape(batch_size, 25, 3)[:, -1, :]
+                        pred_delta_last = delta_st4.reshape(batch_size, -1, 3)[:, -1, :]
+                        pred_slip_last  = slip_st3.reshape(batch_size, -1, 3)[:, -1, :]
+                        pred_vel_last   = v_st1.reshape(batch_size, -1, 3)[:, -1, :]
+                        pred_cur_last   = cur_st2.reshape(batch_size, -1, 3)[:, -1, :]
 
-                        loss_coords = loss(coords_st5, y[:, 0:3])
-                        loss_delta  = loss(pred_delta_last, y[:, 3:6])
-                        loss_vel    = loss(pred_vel_last, y[:, 6:9])
-                        loss_slip   = loss(pred_slip_last, y[:, 9:12])
-                        loss_cur    = loss(pred_cur_last, y[:, 12:15])
+                        y_last = y[:, -1, :] if y.dim() == 3 else y
+
+                        loss_coords = loss(coords_st5, y_last[:, 0:4])
+                        loss_delta  = loss(pred_delta_last, y_last[:, 4:7])
+                        loss_vel    = loss(pred_vel_last, y_last[:, 7:10])
+                        loss_slip   = loss(pred_slip_last, y_last[:, 10:13])
+                        loss_cur    = loss(pred_cur_last, y_last[:, 13:16])
 
                         summary_loss = loss_coords + loss_delta + loss_vel + loss_slip + loss_cur
 
@@ -1104,6 +1099,7 @@ class NPM(nn.Module):
                     self.load_state_dict(torch.load(best_model_path))
                     break
 
+
         plt.figure(figsize=(10, 5))
         plt.plot(sum_train_losses, label='Лосс тренировки')
         plt.plot(sum_val_losses, label='Лосс валидации')
@@ -1115,16 +1111,17 @@ class NPM(nn.Module):
         plt.savefig(os.path.join(root_path, "training_res.png"), dpi=300)
         plt.close()
 
-home_folder = r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model"
+home_folder = r"neuro_physical_model"
 
-# os.makedirs(home_folder, exist_ok=True)
+os.makedirs(home_folder, exist_ok=True)
 
-# exp_name = str(input("Название эксперимента: "))
-# root_path = os.path.join(home_folder, exp_name)
-# os.makedirs(root_path, exist_ok=False)
+exp_name = str(input("Название эксперимента: "))
+root_path = os.path.join(home_folder, exp_name)
+
+os.makedirs(root_path)
 
 # Полные обученные вариант NPM
-best_npm_par = torch.load(r"neuro_physical_model\exp_1_rnn\best_model.pth")
+best_npm_par = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\exp_fin\best_model.pth")
 best_npm_par_zero = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260521_125352_ZERO_COND\best_model.pth")
 best_npm_par_zero_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260521_152100\best_model.pth")
 best_npm_par_trained_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\neuro_physical_model\NPM_study_20260524_143653_rassmotrenie_vseh_variantov_modeley_plus_norm_doobuch_res\best_model.pth")
@@ -1138,15 +1135,15 @@ best_par_v_c_s__sl = torch.load(r"C:\Users\User\Documents\MyPythonProjects\input
 
 best_par_v_sl_s__delta = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Slippage_to_DeltaCoords\peredelka_modeli_izza_privat_24-05-2026_21-40-36\MLPconfig.pth")
 
-best_par_delta_v_sl_cur_s__x = torch.load(r"RNN\X\Full_Context_with_Environments\best_RNN_config.pth")
-best_par_delta_v_sl_cur_s__y = torch.load(r"RNN\Y\Full_Context_with_Environments\best_RNN_config.pth")
-best_par_delta_v_sl_cur_s__phi = torch.load(r"RNN\Phi\Full_Context_with_Environments\best_RNN_config.pth")
+best_par_delta_v_sl_cur_s__x = torch.load(r"RNN\X\Full_Context_with_Environments_And_Global_Coords_REMAKE\best_RNN_config.pth")
+best_par_delta_v_sl_cur_s__y = torch.load(r"RNN\Y\Full_Context_with_Environments_And_Global_Coords_REMAKE\best_RNN_config.pth")
+best_par_delta_v_sl_cur_s__phi = torch.load(r"RNN\Phi\Full_Context_with_Environments_And_Global_Coords_REMAKE\best_RNN_config.pth")
 
-# Вариант с остаточными связями
-best_par_sv_v_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\SetVelocity_To_RealVelocity\MLP_study_20260521_143419\MLPconfig.pth")
-best_par_v_c_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_RES_study_20260523_223518_hids_128\MLPconfig.pth")
-best_par_v_c_s__sl_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Currents_to_Slippage\MLP_RES_study_20260524_101812_hids_128\MLPconfig.pth")
-best_par_v_sl_s__delta_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Slippage_to_DeltaCoords\MLP_RES_study_20260524_104825\MLPconfig.pth")
+# # Вариант с остаточными связями
+# best_par_sv_v_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\SetVelocity_To_RealVelocity\MLP_study_20260521_143419\MLPconfig.pth")
+# best_par_v_c_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_RES_study_20260523_223518_hids_128\MLPconfig.pth")
+# best_par_v_c_s__sl_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Currents_to_Slippage\MLP_RES_study_20260524_101812_hids_128\MLPconfig.pth")
+# best_par_v_sl_s__delta_res = torch.load(r"C:\Users\User\Documents\MyPythonProjects\inputNN\Slippage_to_DeltaCoords\MLP_RES_study_20260524_104825\MLPconfig.pth")
 
 def get_base_mlps():
     m1 = MLP(5, 32, 32, 32, 32, 32, 1)
@@ -1208,23 +1205,23 @@ def get_fresh_lstm_stage():
     Генерирует независимые копии трех предобученных ROBLSTM для 5-й стадии.
     Размерность входа 16 (12 отмасштабированных динамических фич + 4 сурфа).
     """
-    model_x = ROBLSTM(input_dim=16, hidden_dim=32, output_dim=1, num_layers=2, dropout=0.3)
-    model_y = ROBLSTM(input_dim=16, hidden_dim=128, output_dim=1, num_layers=3, dropout=0.0)
-    model_phi = ROBLSTM(input_dim=16, hidden_dim=64, output_dim=1, num_layers=3, dropout=0.0)
+    model_x = ROBLSTM(input_dim=20, hidden_dim=32, output_dim=1, num_layers=1, dropout=0.1)
+    model_y = ROBLSTM(input_dim=20, hidden_dim=128, output_dim=1, num_layers=2, dropout=0.0)
+    model_phi = ROBLSTM(input_dim=20, hidden_dim=256, output_dim=2, num_layers=3, dropout=0.0)
     
     # Подгружаем базовые предобученные веса для каждой координаты отдельно
-    model_x.load_state_dict(torch.load(r"RNN\X\Full_Context_with_Environments\best_RNN_config.pth", map_location=device))
-    model_y.load_state_dict(torch.load(r"RNN\Y\Full_Context_with_Environments\best_RNN_config.pth", map_location=device))
-    model_phi.load_state_dict(torch.load(r"RNN\Phi\Full_Context_with_Environments\best_RNN_config.pth", map_location=device))
+    model_x.load_state_dict(torch.load(r"RNN\X\Full_Context_with_Environments_And_Global_Coords_REMAKE\best_RNN_config.pth", map_location=device))
+    model_y.load_state_dict(torch.load(r"RNN\Y\Full_Context_with_Environments_And_Global_Coords_REMAKE\best_RNN_config.pth", map_location=device))
+    model_phi.load_state_dict(torch.load(r"RNN\Phi\Full_Context_with_Environments_And_Global_Coords_REMAKE\best_RNN_config.pth", map_location=device))
     return [model_x, model_y, model_phi]
 
 def train_preparation(model):
 
     op = torch.optim.Adam(params = model.parameters(), lr = 1e-4)
     criterion = torch.nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(op, mode = "min", factor = 0.5, patience = 10)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(op, mode = "min", factor = 0.5, patience = 5)
 
-    model.fit(op, criterion, scheduler, train_loader, val_loader, epochs = 200, root_path = root_path, patience = 10)
+    model.fit(op, criterion, scheduler, train_loader, val_loader, epochs = 200, root_path =root_path, patience = 10)
 
 # Конфигурация 1: Дообученная модель простая (без рез кон)
 mlps_t, mvc_t, mvcsl_t, mvslsd_t = get_base_mlps()
@@ -1238,7 +1235,6 @@ seq_neur_simple = [mlps_s, mvc_s, mvcsl_s, mvslsd_s, get_fresh_lstm_stage()]
 npm_simple = NPM(scaler=SC_X, seq_neur=seq_neur_simple, device=str(device), kaiman_weight_init=False)
 
 # train_preparation(npm_simple)
-# npm_simple.load_state_dict(torch.load(os.path.join(root_path, "best_model.pth")))
 
 # Конфигурация 3: Модель простая с каймановскими весами простая (без рез кон)
 # mlps_blank, mvc_blank, mvcsl_blank, mvslsd_blank = get_norm_base_mlps()
@@ -1253,14 +1249,14 @@ npm_simple = NPM(scaler=SC_X, seq_neur=seq_neur_simple, device=str(device), kaim
 # npm_zero_cond_res.load_state_dict(best_npm_par_zero_res)
 
 # Конфигурация 5: Модель склеенная (с рез кон)
-mlps_res_glue, mvc_s_res_glue, mvcsl_s_res_glue, mvslsd_res_glue = get_res_base_mlps()
-seq_neur_glue = [mlps_res_glue, mvc_s_res_glue, mvcsl_s_res_glue, mvslsd_res_glue, get_fresh_lstm_stage()]
-npm_glued_res = NPM(scaler=SC_X, seq_neur=seq_neur_glue, device=str(device), kaiman_weight_init=False)
+# mlps_res_glue, mvc_s_res_glue, mvcsl_s_res_glue, mvslsd_res_glue = get_res_base_mlps()
+# seq_neur_glue = [mlps_res_glue, mvc_s_res_glue, mvcsl_s_res_glue, mvslsd_res_glue, get_fresh_lstm_stage()]
+# npm_glued_res = NPM(scaler=SC_X, seq_neur=seq_neur_glue, device=str(device), kaiman_weight_init=False)
 
-# Конфигурация 6: Модель склеенная дообученная (с рез кон)
-mlps_res_glue_t, mvc_s_res_glue_t, mvcsl_s_res_glue_t, mvslsd_res_glue_t = get_res_base_mlps()
-seq_neur_glue_t = [mlps_res_glue_t, mvc_s_res_glue_t, mvcsl_s_res_glue_t, mvslsd_res_glue_t, get_fresh_lstm_stage()]
-npm_glued_res_t = NPM(scaler=SC_X, seq_neur=seq_neur_glue_t, device=str(device), kaiman_weight_init=False)
+# # # Конфигурация 6: Модель склеенная дообученная (с рез кон)
+# mlps_res_glue_t, mvc_s_res_glue_t, mvcsl_s_res_glue_t, mvslsd_res_glue_t = get_res_base_mlps()
+# seq_neur_glue_t = [mlps_res_glue_t, mvc_s_res_glue_t, mvcsl_s_res_glue_t, mvslsd_res_glue_t, get_fresh_lstm_stage()]
+# npm_glued_res_t = NPM(scaler=SC_X, seq_neur=seq_neur_glue_t, device=str(device), kaiman_weight_init=False)
 # npm_glued_res_t.load_state_dict(best_npm_par_trained_res)
 
 root_path = r".//neuro_physical_model//NPM_comparison"
@@ -1269,78 +1265,149 @@ os.makedirs(root_path, exist_ok=True)
 data = {"test": test_loader}
 
 columns_names = [
-    "X", "Y", "Фи",
+    "X", "Y", "sin(Фи)", "cos(Фи)",
     "Дельта Х", "Дельта У", "Дельта Фи", 
     "Проскальзывание М1", "Проскальзывание М2", "Проскальзывание М3", 
     "Ток М1", "Ток М2", "Ток М3", 
     "Скорость М1", "Скорость М2", "Скорость М3", 
     "Сумма"
 ]
+
 rows_names = [
     "Склеенная", 
     "Тренированная", 
-    # "Обученная с нуля", 
-    # "Обученная с нуля + остаточные связи", 
-    "Склеенная + остаточные связи", 
-    "Тренированная + остаточные связи", 
     "Разность (Скл - Трен)"
 ]
+df_session = df[df["session_id"] == session].copy()
+df_session["original_index"] = df_session.index
 
-def reorder_metrics(raw_list):
-    """
-    Вспомогательная функция. Вырезает первые 3 координаты и перестраивает 
-    оставшиеся 12 параметров evaluate под порядок колонок в columns_names.
-    """
-    arr = np.array(raw_list)
-    return list(np.hstack([
-        arr[0:3], # Х, У, Фи
-        arr[3:6],   # Дельта Х, Дельта У, Дельта Фи
-        arr[9:12],  # Проскальзывание М1, М2, М3
-        arr[12:15], # Ток М1, М2, М3
-        arr[6:9]  # Скорость М1, М2, М3
-  
-    ]))
+# Добавляем этот индекс во временный список таргетов для графиков
+targets_for_graphs = targets_all + ["original_index"]
+
+# 2. Создаем датасет
+single_session_dataset = RobotDataset(
+    grouped_df=df_session,
+    sequence_length=20,
+    feature_cols=features,
+    target_cols=targets_for_graphs # <--- Передаем расширенный список таргетов
+)
+
+single_loader = DataLoader(
+    single_session_dataset, 
+    batch_size=512, 
+    shuffle=False, 
+    pin_memory=True
+)
+
+predict_list = []
+output_list = []
+index_list = [] # <--- Сюда будем собирать индексы строк для восстановления времени
+npm_trained.eval()
+
+with torch.no_grad():
+    for x_batch, y_batch in single_loader:
+        x_batch = x_batch.to(device)
+        current_batch_size = x_batch.shape[0]
+
+        coords_st5, delta_st4, slip_st3, cur_st2, v_st1 = npm_trained(x_batch)
+
+        delta_3d = delta_st4.reshape(current_batch_size, -1, 3)
+        slip_3d = slip_st3.reshape(current_batch_size, -1, 3)
+        vel_3d = v_st1.reshape(current_batch_size, -1, 3)
+        cur_3d = cur_st2.reshape(current_batch_size, -1, 3)
+
+        predict_ordered = np.hstack([
+            coords_st5.cpu().numpy(),
+            delta_3d[:, -1, :].cpu().numpy(),
+            slip_3d[:, -1, :].cpu().numpy(),
+            cur_3d[:, -1, :].cpu().numpy(),
+            vel_3d[:, -1, :].cpu().numpy()
+        ])
+
+        y_last = y_batch[:, -1, :] if y_batch.dim() == 3 else y_batch
+        true_value = y_last.numpy()
+        
+        # Разделяем реальные физические таргеты и наш технический индекс
+        # Физические таргеты (первые 16 колонок):
+        true_ordered = np.hstack([
+            true_value[:, 0:4],    
+            true_value[:, 4:7],    
+            true_value[:, 10:13],  
+            true_value[:, 13:16],  
+            true_value[:, 7:10]    
+        ])
+        
+        # Индекс оригинальной строки (самая последняя колонка в true_value)
+        batch_indices = true_value[:, -1].astype(int)
+
+        predict_list.append(predict_ordered)
+        output_list.append(true_ordered)
+        index_list.append(batch_indices)
+
+# 3. Склеиваем все батчи
+predict_np = np.vstack(predict_list)
+output_true_ordered = np.vstack(output_list)
+all_windows_indices = np.concatenate(index_list)
+
+# 4. Восстанавливаем точное время 't' для каждого окна по сохраненным индексам
+# Мы маппим индексы строк датасета на реальные значения времени из исходного df
+timestamps = df_session.loc[all_windows_indices, "t"].values
+
+# 5. Сортируем все массивы по меткам времени, полностью убирая «пилу»
+sort_indices = np.argsort(timestamps)
+
+timestamps_sorted = timestamps[sort_indices]
+predict_np_sorted = predict_np[sort_indices]
+output_true_ordered_sorted = output_true_ordered[sort_indices]
+
+# Названия параметров
+param_names = [
+    "Coords X", "Coords Y", "Coords Sin", "Coords Cos",
+    "Delta X", "Delta Y", "Delta Phi",
+    "Slip S1", "Slip S2", "Slip S3",
+    "Токи M1", "Токи M2", "Токи M3",
+    "Скор. V1", "Скор. V2", "Скор. V3"
+]
+
+# 6. Отрисовка идеально последовательных графиков
+for i in range(16):
+    plt.figure(figsize=(12, 5))
+    plt.plot(timestamps_sorted, predict_np_sorted[:, i], label='Предсказание модели', color='blue', alpha=0.9)
+    plt.plot(timestamps_sorted, output_true_ordered_sorted[:, i], label='Реальные данные (Истина)', color='orange', linestyle='--', alpha=0.8)
+    plt.title(f"Сессия #{session} | Параметр: {param_names[i]}")
+    plt.xlabel("Время сессии, с")
+    plt.ylabel("Значение")
+    plt.legend()
+    plt.xlim((0, 500))
+    plt.grid(True, linestyle=':')
+    plt.show()
 
 for key, value in data.items():
 
     print(f"Запуск оценки всех конфигураций моделей для выборки: {key}...")
 
-    # Извлекаем полные списки MAЕ из 15 элементов для каждой модели
-    raw_t = npm_trained.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*15)
-    raw_s = npm_simple.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*15)
-    # raw_z = npm_zero_cond.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*15)
-    # raw_z_res = npm_zero_cond_res.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*15)
-    raw_glued_res = npm_glued_res.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*15)
-    raw_glued_res_t = npm_glued_res_t.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*15)
+    # Извлекаем готовые списки MAЕ из 16 элементов в правильном порядке
+    res_t = list(npm_trained.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*16))
+    res_s = list(npm_simple.evaluate(value, name=key, save_path=root_path, device=str(device)).get("MAE", [0]*16))
 
-    res_t = reorder_metrics(raw_t)
-    res_s = reorder_metrics(raw_s)
-    # res_z = reorder_metrics(raw_z)
-    # res_z_res = reorder_metrics(raw_z_res)
-    res_glued_res = reorder_metrics(raw_glued_res)
-    res_glued_res_t = reorder_metrics(raw_glued_res_t)
-
+    # Добавляем сумму метрик в конец списка
     res_t.append(sum(res_t))
     res_s.append(sum(res_s))
-    # res_z.append(sum(res_z))
-    # res_z_res.append(sum(res_z_res))
-    res_glued_res.append(sum(res_glued_res))
-    res_glued_res_t.append(sum(res_glued_res_t))
 
     res_diff = np.array(res_s) - np.array(res_t)
 
     final_df = pd.DataFrame(
-        data=[res_s, res_t,
-            #    res_z, res_z_res,
-                 res_glued_res, res_glued_res_t, list(res_diff)], 
+        data=[res_s, 
+              res_t,
+              list(res_diff)
+             ], 
         index=rows_names, 
-        columns=columns_names
+        columns=columns_names # Убедитесь, что в columns_names теперь 17 элементов (16 признаков + 1 для Суммы)
     )
 
     print(f"\nРезультаты проверки (Выборка {key}):")
     print(final_df[["Скорость М1", "Скорость М2", "Скорость М3", "Ток М1", "Ток М2", "Ток М3"]].round(4))
     
-    # Сохраняем в таблицу Excel
     output_excel_path = os.path.join(root_path, f"FINAL_NPM_metrics_{key}.xlsx")
     final_df.to_excel(output_excel_path, index=True)
     print(f"Таблица успешно сохранена в: {output_excel_path}\n")

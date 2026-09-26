@@ -19,7 +19,7 @@ print(f"Обучение на {device}")
 
 df = pd.read_csv("C:\\Users\\User\\OneDrive\\Desktop\\УИРС\\SEM5\\filtered_robot_data.csv", encoding="cp1251", sep=";")
 
-df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3cur"]], columns = ["surf"], prefix = "type_").astype(float)
+df = pd.get_dummies(df[["m1vel", "m2vel", "m3vel", "surf", "m1cur", "m2cur", "m3cur", "m1setvel", "m2setvel", "m3setvel"]], columns = ["surf"], prefix = "type_").astype(float)
 
 train, temp = train_test_split(df, test_size = 0.2, random_state = 42, shuffle = True)
 val, test = train_test_split(temp, test_size = 0.5, random_state = 42, shuffle = True)
@@ -28,7 +28,7 @@ train = train[(train[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 val = val[(val[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 test = test[(test[["m1cur", "m2cur", "m3cur"]] > 1e-2).all(axis=1)]
 
-features = ["m1vel", "m2vel", "m3vel", "type__brown", "type__gray", "type__green", "type__table"]
+features = ["m1setvel", "m2setvel", "m3setvel", "m1vel", "m2vel", "m3vel", "type__brown", "type__gray", "type__green", "type__table"]
 targets = ["m1cur", "m2cur", "m3cur"]
 
 df.info()
@@ -237,7 +237,7 @@ class MLP(nn.Module):
         b_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
         weight_decay = trial.suggest_float("weight_decay", 0, 1e-3)
 
-        layers_struct = [7] + [hidden_size]*num_layers + [3]
+        layers_struct = [10] + [hidden_size]*num_layers + [3]
 
         trial_model = MLP(*layers_struct).to(device=device)
 
@@ -251,7 +251,7 @@ class MLP(nn.Module):
         os.makedirs(save_path, exist_ok = True)
 
         best_val_loss = trial_model.teaching(
-            epochs=100, 
+            epochs=10, 
             train_loader=t_load, 
             val_loader=v_load, 
             model_state_dict={},
@@ -270,29 +270,31 @@ timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 root_path = f".//RealVelocity_To_Current//MLP_study_{timestamp}"
 os.makedirs(root_path, exist_ok = True)
 
-# study = optuna.create_study(direction="minimize")
-# study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=40)
+study = optuna.create_study(direction="minimize")
+study.optimize(lambda trial: MLP.objective(trial, train_dataset, val_dataset, root_path, device), n_trials=20)
 
-# best_trial = study.best_trial
+best_trial = study.best_trial
 
-# result = {"Best trial number" : best_trial.number,
-#           "Best loss" : best_trial.value,
-#           "Best parameters" : best_trial.params,
-#           }
+result = {"Best trial number" : best_trial.number,
+          "Best loss" : best_trial.value,
+          "Best parameters" : best_trial.params,
+          }
 
 train_loader = DataLoader(train_dataset, batch_size = 128, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size = 512, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size = 512, shuffle = False)
 
-# with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
-#     json.dump(result, res, indent=4, ensure_ascii=False)
+with open(os.path.join(root_path, "optuna_results.json"), "w") as res:
+    json.dump(result, res, indent=4, ensure_ascii=False)
+
+raise KeyboardInterrupt
 
 data = {"train" : train_loader,
          "val" : val_loader,
            "test" : test_loader}
 
-# best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
-model = MLP(7,64,64,64,64,3).to(device)
+best_struct = [7] + [best_trial.params["hidden_size"]]*best_trial.params["num_layers"] + [3]
+model = MLP(10,64,64,64,64,3).to(device)
 
 # best_trial_folder = f"MLP_{best_trial.number}_{'-'.join(map(str, best_struct))}_Adam_{best_trial.params['lr']}_MSELoss_Batch_{best_trial.params["batch_size"]}"
 best_weight_path = os.path.join(r"C:\Users\User\Documents\MyPythonProjects\inputNN\RealVelocity_To_Current\MLP_study_20260412_181402\MLP_34_7-64-64-64-64-3_Adam_0.0006238342122664613_MSELoss_Batch_64\MLPconfig.pth")

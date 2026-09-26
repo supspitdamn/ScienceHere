@@ -1,0 +1,32 @@
+{
+    "experiment_name": "Full_Context_with_Environments",
+    "best_val_loss": 0.06432070575621245,
+    "input_features": [
+        "vx",
+        "vy",
+        "omega",
+        "m1vel",
+        "m2vel",
+        "m3vel",
+        "w1slip",
+        "w2slip",
+        "w3slip",
+        "m1cur",
+        "m2cur",
+        "m3cur",
+        "type_brown",
+        "type_gray",
+        "type_green",
+        "type_table"
+    ],
+    "target_columns": [
+        "ypos"
+    ],
+    "hyperparameters": {
+        "sequence_length": 20,
+        "hidden_dim": 128,
+        "num_layers": 3,
+        "dropout": 0.0,
+        "lr": 0.00011132026443722167
+    }
+}
